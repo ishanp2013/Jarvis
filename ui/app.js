@@ -310,7 +310,14 @@ function renderTasks(list) {
     done.onclick = async () => renderTasks(await api.complete_task(t.id));
     const drop = document.createElement("button"); drop.className = "small ghost"; drop.textContent = "Dismiss";
     drop.onclick = async () => renderTasks(await api.dismiss_task(t.id));
-    const btns = document.createElement("span"); btns.append(done, drop);
+    const btns = document.createElement("span");
+    if (!t.result_path && ["presentation", "document", "notes", "revision", "spreadsheet", "reading", "other"].includes(t.kind)) {
+      const prep = document.createElement("button"); prep.className = "small ghost"; prep.textContent = "Prepare";
+      prep.title = "Have Jarvis prepare a draft of this";
+      prep.onclick = async () => { toast(await api.prepare_task(t.id)); loadJobs(); };
+      btns.append(prep);
+    }
+    btns.append(done, drop);
     li.append(main, btns); ul.appendChild(li);
   });
 }
@@ -323,8 +330,31 @@ function when(ts) {
   return d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+const JOB_STATE = { done: "ready", running: "working on it", queued: "queued", waiting: "waiting for AI budget", failed: "couldn't finish" };
+
+async function loadJobs() {
+  const list = await api.jobs(), ul = $("#jobs"); ul.innerHTML = "";
+  if (!list.length) { ul.innerHTML = "<li class='muted'>Nothing yet. Try saying “make a 10-slide presentation about renewable energy”.</li>"; return; }
+  list.slice(0, 10).forEach((j) => {
+    const li = document.createElement("li"); li.className = j.state === "failed" ? "urgent" : j.state === "done" ? "" : "soon";
+    const main = document.createElement("div");
+    const b = document.createElement("b"); b.textContent = j.title;
+    const s = document.createElement("small");
+    s.textContent = `${j.kind} · ${JOB_STATE[j.state] || j.state}${j.state === "running" && j.step ? " (" + j.step + ")" : ""}${j.error ? " · " + j.error : ""}`;
+    main.append(b, s);
+    if (j.review && j.review.length) main.title = "Jarvis's own check noted: " + j.review.join(" ");
+    const btns = document.createElement("span");
+    if (j.state === "done") {
+      const o = document.createElement("button"); o.className = "small"; o.textContent = "Open";
+      o.onclick = async () => toast(await api.open_result(j.id)); btns.append(o);
+    }
+    li.append(main, btns); ul.appendChild(li);
+  });
+}
+
 async function loadAgent() {
   renderTasks(await api.tasks());
+  loadJobs();
   const s = await api.agent_status();
   $("#ag-last").textContent = s.running ? "checking now…" : when(s.last_run);
   $("#ag-next").textContent = s.enabled ? when(s.next_run) : "off";

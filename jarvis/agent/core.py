@@ -24,11 +24,13 @@ BATCH = 10
 
 
 class Agent:
-    def __init__(self, store, notify, request_reply=None, paused=None):
+    def __init__(self, store, notify, request_reply=None, paused=None, on_task=None):
         """notify(text, important=False); request_reply(item, text) shows a reply draft card;
-        paused() -> reason string to skip a scheduled run (game mode, low battery), or None."""
+        paused() -> reason string to skip a scheduled run (game mode, low battery), or None;
+        on_task(task) is called for each new task (the worker prepares a draft of it)."""
         self.store, self.notify = store, notify
         self.request_reply = request_reply or (lambda item, text: None)
+        self.on_task = on_task or (lambda task: None)
         self.paused = paused or (lambda: None)
         self.lock = threading.Lock()
         self.running = False
@@ -116,6 +118,10 @@ class Agent:
                                               r["importance"], it["source"], f'{it["source"]}:{it["ext_id"]}')
                     if tid:
                         new_tasks.append({"title": r["task"]["title"], "due": r["task"]["due"]})
+                        try:
+                            self.on_task(self.store.task(tid))
+                        except Exception:
+                            log.exception("on_task")
                 if r["reply"] and it["source"] in ("gmail", "outlook"):
                     self.request_reply(it, r["reply"])
                     drafts += 1

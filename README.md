@@ -64,6 +64,14 @@ It is built to stay light on a mid-range laptop (it was developed on a Ryzen 5 3
 - **Privacy:** only items from your school senders reach the AI.
 - **Free AI budget:** it paces itself to the free daily limit and always leaves room for your own questions.
 
+**Prepared work**
+- **What it makes:** finished files from a task or a request, saved in Documents\School Projects:
+  - PowerPoint decks (right slide count, credited free-licence photos, real charts, speaker notes, sources)
+  - Word reports, study notes, revision sheets and PDF summaries
+  - Excel sheets
+- **How:** it plans, researches reliable sources, writes, then checks and fixes its own draft before telling you.
+- **Drafts only:** everything is a draft for you to review, and nothing is ever submitted.
+
 **Dashboard**
 - Live orb
 - Conversation, activity log, settings and connections

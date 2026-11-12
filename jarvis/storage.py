@@ -60,6 +60,8 @@ class Store:
             CREATE TABLE IF NOT EXISTS items(id INTEGER PRIMARY KEY, source TEXT, ext_id TEXT, ts REAL, sender TEXT,
                 title TEXT, school INTEGER, category TEXT, importance INTEGER, summary TEXT, needs_reply INTEGER,
                 deadline TEXT, reply TEXT, url TEXT, UNIQUE(source, ext_id));
+            CREATE TABLE IF NOT EXISTS jobs(id INTEGER PRIMARY KEY, task_id INTEGER, kind TEXT, title TEXT, state TEXT,
+                step TEXT, data TEXT, result_path TEXT, error TEXT, created REAL, updated REAL);
             CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY, title TEXT, details TEXT, kind TEXT, due TEXT,
                 importance INTEGER, status TEXT, source TEXT, source_ref TEXT, created REAL, updated REAL,
                 result_path TEXT, reminded TEXT DEFAULT '');
@@ -89,6 +91,42 @@ class Store:
         keys = ("id", "source", "ts", "sender", "title", "school", "category", "importance", "summary", "needs_reply",
                 "deadline", "reply", "url")
         return [dict(zip(keys, r)) for r in rows]
+
+    # ---- prepared-work jobs (each step's output is saved, so a restart resumes where it stopped)
+    _JOB_COLS = ("id", "task_id", "kind", "title", "state", "step", "data", "result_path", "error", "created", "updated")
+
+    def add_job(self, kind, title, data, task_id=None):
+        import json
+        now = time.time()
+        return self._exec("INSERT INTO jobs(task_id, kind, title, state, step, data, created, updated) VALUES(?,?,?,?,?,?,?,?)",
+                          (task_id, kind, title[:200], "queued", "", json.dumps(data), now, now)).lastrowid
+
+    def jobs(self, states=None, limit=30):
+        import json
+        sql = f"SELECT {', '.join(self._JOB_COLS)} FROM jobs"
+        args = ()
+        if states:
+            sql += f" WHERE state IN ({','.join('?' * len(states))})"
+            args = tuple(states)
+        rows = self._query(sql + " ORDER BY id DESC LIMIT ?", args + (limit,))
+        out = []
+        for r in rows:
+            j = dict(zip(self._JOB_COLS, r))
+            j["data"] = json.loads(j["data"] or "{}")
+            out.append(j)
+        return out
+
+    def job(self, job_id):
+        found = [j for j in self.jobs(limit=500) if j["id"] == int(job_id)]
+        return found[0] if found else None
+
+    def update_job(self, job_id, **f):
+        import json
+        if "data" in f:
+            f["data"] = json.dumps(f["data"])
+        cols = [k for k in f if k in ("state", "step", "data", "result_path", "error")]
+        self._exec(f"UPDATE jobs SET {', '.join(c + '=?' for c in cols)}, updated=? WHERE id=?",
+                   [f[c] for c in cols] + [time.time(), int(job_id)])
 
     # ---- the task list
     _TASK_COLS = ("id", "title", "details", "kind", "due", "importance", "status", "source", "source_ref", "created",

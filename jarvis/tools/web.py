@@ -8,7 +8,9 @@ import httpx
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 
-UA = {"User-Agent": "JarvisAssistant/1.0 (personal desktop assistant) httpx", "Accept-Language": "en-GB,en;q=0.8"}
+# Wikipedia asks programs to name themselves with a contact link; generic library names get refused.
+UA = {"User-Agent": "JarvisAssistant/1.0 (personal study assistant; https://github.com/ishanp2013/Jarvis)",
+      "Accept-Language": "en-GB,en;q=0.8"}
 
 
 def search(query, max_results=5):

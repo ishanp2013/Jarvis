@@ -1,4 +1,5 @@
 """Core tests. Run:  run_tests.bat   (no apps are opened or closed: desktop actions are mocked)."""
+import os
 import tempfile
 import threading
 import time
@@ -499,7 +500,7 @@ class NewFeatureRouteTests(RouterBase):
 
     def test_games(self):
         from jarvis.tools import games
-        fake = {"name": "Rocket League®", "store": "Epic", "launch": "x", "folder": ""}
+        fake = {"name": "Rocket LeagueÂ®", "store": "Epic", "launch": "x", "folder": ""}
         with mock.patch.object(games, "find", lambda q: fake if "rocket" in q else None), \
                 mock.patch.object(games, "launch", lambda q: f"Launching {q}."):
             self.assertEqual(self.ask("play rocket league"), "Launching rocket league, sir.")
@@ -641,9 +642,9 @@ class NewSafetyTests(unittest.TestCase):
     def test_game_matching_is_strict(self):
         from jarvis.tools import games
         lib = [{"name": n, "store": "Steam", "launch": "x", "folder": ""} for n in
-               ("Rocket League®", "Fall Guys", "Five Nights at Freddy's: Into the Pit", "Grand Theft Auto V")]
+               ("Rocket LeagueÂ®", "Fall Guys", "Five Nights at Freddy's: Into the Pit", "Grand Theft Auto V")]
         with mock.patch.object(games, "installed", lambda refresh=False: lib):
-            self.assertEqual(games.find("rocket league")["name"], "Rocket League®")
+            self.assertEqual(games.find("rocket league")["name"], "Rocket LeagueÂ®")
             self.assertEqual(games.find("fnaf")["name"], "Five Nights at Freddy's: Into the Pit")
             self.assertEqual(games.find("gta")["name"], "Grand Theft Auto V")
             self.assertIsNone(games.find("notepad"))
@@ -1029,6 +1030,132 @@ class TaskCommandTests(RouterBase):
         self.assertIn("Marked Maths worksheet as done", self.ask("mark the maths worksheet as done"))
         self.assertIn("1 open task", self.ask("what are my tasks"))
         self.assertIn("couldn't find a task", self.ask("i've finished the history essay"))
+
+
+class WorkerTests(unittest.TestCase):
+    """Prepared work end to end with a fake AI and fake research: real files are built and read back."""
+
+    def setUp(self):
+        import json
+        from jarvis.agent import worker
+        self.worker_mod = worker
+        self.store = Store(Path(tempfile.mkdtemp()) / "t.db")
+        self.out = Path(tempfile.mkdtemp())
+        self.notes = []
+        self.w = worker.Worker(self.store, lambda text, important=False: self.notes.append(text))
+        self.replies = []
+        self.patches = [
+            mock.patch.object(worker, "output_dir", lambda: self.out),
+            mock.patch.object(worker.ai, "complete", lambda system, prompt, kind="agent", max_tokens=0: json.dumps(self.replies.pop(0))),
+            mock.patch.object(worker.ai, "agent_may_use", lambda n=1: True),
+            mock.patch.object(worker.research, "gather", lambda topic, queries, **k: [
+                {"n": 1, "title": "Renewable energy - Wikipedia", "url": "https://en.wikipedia.org/wiki/Renewable_energy",
+                 "text": "Hydropower supplies about 14% of world electricity, wind about 8% and solar about 5%."}]),
+            mock.patch.object(worker.research, "image", lambda q, folder, name: None),
+        ]
+        for p in self.patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _job(self, kind, title, req, task_id=None):
+        jid = self.store.add_job(kind, title, {"requirements": req}, task_id)
+        self.w._run(self.store.job(jid))
+        return self.store.job(jid)
+
+    def test_ten_slide_presentation(self):
+        outline = [{"title": f"Slide {i}", "layout": "bullets", "point": f"point {i}"} for i in range(1, 9)]
+        slides = [{"title": f"Slide {i}", "layout": "bullets", "bullets": [f"Fact {i}a", f"Fact {i}b"], "notes": "Say this [1]."}
+                  for i in range(1, 8)]  # one short: the worker must still deliver the right count
+        slides[2] = {"title": "Electricity share", "layout": "chart", "bullets": ["Hydro leads"],
+                     "chart": {"type": "bar", "categories": ["Hydro", "Wind", "Solar"], "series": [{"name": "%", "values": [14, 8, 5]}],
+                               "source": "[1] Wikipedia"}}
+        slides[4] = {"title": "Bad chart", "layout": "chart", "chart": {"categories": ["a"], "series": [{"values": ["x"]}]}}
+        self.replies = [{"title": "Renewable Energy", "subtitle": "Sun, wind and water", "topic": "renewable energy",
+                         "search_queries": ["renewable energy share"], "outline": outline},
+                        {"slides": slides},
+                        {"ok": False, "problems": ["Slide 1 is vague"], "fixes": [{"slide": 1, "title": "What is renewable energy?"}]}]
+        tid = self.store.add_task("Science presentation: renewable energy", "10 slides on renewable energy", "presentation", "2026-11-19")
+        job = self._job("presentation", "Science presentation: renewable energy", "Prepare a 10-slide presentation", tid)
+        self.assertEqual(job["state"], "done")
+        path = job["result_path"]
+        self.assertTrue(path.endswith(".pptx") and os.path.exists(path))
+        from jarvis.agent.builders import pptx_builder
+        from pptx import Presentation
+        self.assertEqual(pptx_builder.check(path), {"slides": 10, "empty": []})
+        prs = Presentation(path)
+        titles = [next((sh.text_frame.text for sh in s.shapes if sh.has_text_frame and sh.text_frame.text), "") for s in prs.slides]
+        self.assertIn("What is renewable energy?", titles)  # the review's fix was applied
+        self.assertEqual(sum(sh.has_chart for s in prs.slides for sh in s.shapes), 1)  # the broken chart became bullets
+        self.assertEqual(self.store.task(tid)["result_path"], path)
+        self.assertTrue(any("is ready" in n and "draft" in n for n in self.notes))
+
+    def test_never_overwrites(self):
+        from jarvis.agent.worker import _unique
+        p = self.out / "x" / "Deck.pptx"
+        p.parent.mkdir(parents=True)
+        p.write_text("mine")
+        self.assertEqual(_unique(p).name, "Deck (2).pptx")
+        self.assertEqual(p.read_text(), "mine")
+
+    def test_study_notes_and_spreadsheet(self):
+        self.replies = [{"title": "Photosynthesis notes", "topic": "photosynthesis", "search_queries": [],
+                         "sections": [{"heading": "Basics"}, {"heading": "Equation"}]},
+                        {"sections": [{"heading": "Basics", "paragraphs": ["Plants make glucose from light. " * 20],
+                                       "bullets": ["Happens in chloroplasts", "Needs chlorophyll"]},
+                                      {"heading": "Equation", "paragraphs": ["6CO2 + 6H2O gives C6H12O6 + 6O2. " * 5]}]},
+                        {"ok": True, "problems": [], "fixes": []}]
+        job = self._job("notes", "Biology notes: photosynthesis", "study notes")
+        self.assertEqual(job["state"], "done")
+        from jarvis.agent.builders import docx_builder
+        self.assertGreater(docx_builder.check(job["result_path"])["words"], 80)
+        self.replies = [{"title": "Revision timetable", "sheets": [{"name": "Plan", "columns": ["Day", "Subject", "Hours"],
+                                                                     "rows": [["Mon", "Maths", "2"], ["Tue", "Science", "1.5"],
+                                                                              ["Total", "", "=SUM(C2:C3)"]]}]}]
+        job = self._job("spreadsheet", "Revision timetable", "a revision timetable")
+        from openpyxl import load_workbook
+        ws = load_workbook(job["result_path"]).active
+        self.assertEqual(ws["C4"].value, "=SUM(C2:C3)")
+        self.assertEqual(ws["C2"].value, 2)
+
+    def test_auto_prepare_once_per_task(self):
+        t = self.store.task(self.store.add_task("History essay", "800 words on the Romans", "document"))
+        self.assertIsNotNone(self.w.queue_task(t))
+        self.assertIsNone(self.w.queue_task(t))  # already on its way
+        self.assertIsNone(self.w.queue_task(self.store.task(self.store.add_task("Read chapter 4", kind="reading"))))
+
+
+class WorkCommandTests(RouterBase):
+    def setUp(self):
+        super().setUp()
+        from jarvis.agent.core import Agent
+        self.brain.agent = Agent(self.brain.store, lambda *a, **k: None)
+        self.queued = []
+        self.brain.worker = mock.Mock()
+        self.brain.worker.queue_request = lambda kind, title, req, extra=None: self.queued.append((kind, title, req, extra))
+        self.brain.worker.queue_task = lambda task, kind=None: self.queued.append(("task", task["title"], kind)) or 1
+
+    def test_requests(self):
+        from jarvis import ai
+        with mock.patch.object(ai, "agent_may_use", lambda n=1: True):
+            self.assertIn("On it", self.ask("make a 10-slide presentation about renewable energy"))
+        kind, title, req, _ = self.queued[-1]
+        self.assertEqual((kind, title), ("presentation", "Renewable energy presentation"))
+        self.assertIn("10", req)
+        self.brain.store.add_task("Science presentation: the water cycle", "", "presentation", "2026-11-19")
+        self.ask("prepare the presentation on the water cycle")
+        self.assertEqual(self.queued[-1], ("task", "Science presentation: the water cycle", "presentation"))
+        with mock.patch.object(ai, "agent_may_use", lambda n=1: True):
+            self.ask("make study notes on photosynthesis")
+        self.assertEqual(self.queued[-1][0], "notes")
+
+    def test_show_and_pdf(self):
+        from jarvis.tools import files
+        self.brain.worker.latest = lambda kind=None: None
+        self.assertIn("haven't prepared", self.ask("show me the presentation"))
+        with mock.patch.object(files, "search", lambda w, **k: [{"path": "C:/x/Biology.pdf", "name": "Biology.pdf"}]):
+            self.assertIn("Summarising Biology.pdf", self.ask("summarise my biology pdf"))
+        self.assertEqual(self.queued[-1][0], "pdf_summary")
+        self.assertEqual(self.queued[-1][3], {"path": "C:/x/Biology.pdf"})
 
 
 if __name__ == "__main__":

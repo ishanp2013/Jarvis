@@ -319,6 +319,40 @@ Every 45 minutes (Tasks tab → *Check every*), and when you press **Check schoo
 3. Jarvis → Connections → **Google Classroom → Sign in with school account**, then pick your school account.
 4. Some schools block outside apps; Google then shows "Access blocked", and only the school's IT admin can allow it. Jarvis still gets Classroom news through Classroom's emails and phone notifications.
 
+## 7n. Prepared work (presentations, documents, notes)
+
+Jarvis can turn a task into a finished file, saved in **Documents\School Projects\<task name>**:
+- **PowerPoint presentation:**
+  - the slide count you were asked for (title and sources slides included)
+  - free-licence photos from Wikimedia Commons, credited on the slide
+  - a real, editable chart when the sources give real numbers
+  - speaker notes on every slide, and a sources slide
+- **Word document:** a report, essay draft, study notes, a revision sheet with practice questions, or a PDF summary.
+- **Excel spreadsheet:** timetables, data tables and the like, with working formulas.
+
+**How it works:**
+1. **Plan:** the AI plans the outline.
+2. **Research:** Jarvis looks up reliable sources (Wikipedia and government, university and education sites first; sites like Pinterest, Quora, Course Hero or AI-written encyclopedias are skipped).
+3. **Write:** the AI writes from those sources, citing them.
+4. **Build:** Jarvis adds pictures and builds the file.
+5. **Check:** the AI reviews the draft against the assignment and fixes what it finds. Jarvis then checks the file itself: the right number of slides, no empty pages.
+6. **Save:** the file is saved without overwriting any of yours. A new name is used if one exists.
+
+A presentation takes about 3–5 minutes on the free AI and about 4 requests.
+
+**Ways to start one:**
+- **Automatically:** new assignments the agent finds (presentations, documents, notes, revision) are prepared by themselves. Turn this off in the Tasks tab.
+- **Prepare** on any task in the Tasks tab.
+- **Say it:**
+  - "make a 10-slide presentation about renewable energy"
+  - "make study notes on photosynthesis"
+  - "make a revision sheet for quadratics"
+  - "summarise my biology PDF"
+  - "prepare the presentation on the water cycle" (for a task already on your list)
+- **Opening the result:** "show me the presentation", **Open** in the Tasks tab, or **Open on laptop** from your phone.
+
+**It's a draft.** Free AI models can make mistakes, including wrong numbers and wrong maths answers. Read it through, check the facts, and make it your own before handing anything in. Jarvis never submits anything.
+
 ## 8. Safety rules built in
 
 - **Closing apps** and **sending** email, Discord, Slack, Telegram, WhatsApp messages or GitHub issues happen straight away when you ask, as you chose. Turn either back on under Settings → Confirmations.

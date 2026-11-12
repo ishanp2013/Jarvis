@@ -15,6 +15,7 @@ import webview
 from . import autostart, config, power, providers, speech
 from . import brain as brain_module
 from .agent.core import Agent
+from .agent.worker import Worker
 from .brain import Brain
 from .config import secret_status, settings
 from .listener import Listener
@@ -53,9 +54,12 @@ class Jarvis:
                                       lambda v: self.emit("voice_level", {"rms": round(v, 3)}))
         self.brain = Brain(self.store, self.emit, self.speak, lambda: self.listener)
         self.brain.set_game_mode = lambda on: self.set_game_mode(on)
-        self.agent = Agent(self.store, self.notify, self._reply_card, self._agent_paused)
+        self.worker = Worker(self.store, self.notify)
+        self.agent = Agent(self.store, self.notify, self._reply_card, self._agent_paused, self._auto_prepare)
+        self.brain.worker = self.worker
         self.brain.agent = self.agent
         brain_module._AGENT[0] = self.agent  # for the AI's task tools
+        brain_module._WORKER[0] = self.worker
         self.ready = {"wake": False, "stt": False}
         self.game_mode, self._game_auto, self._game_off_checks, self._mic_before_game = False, False, 0, False
         self.overlay = None        # pywebview window (desktop mode) or subprocess (browser mode)
@@ -93,6 +97,10 @@ class Jarvis:
                 phone.ping("Jarvis: " + text)
         except Exception:
             pass
+
+    def _auto_prepare(self, task):
+        if settings.get("agent_auto_prepare", True) and task:
+            self.worker.queue_task(task)
 
     def _reply_card(self, item, text):
         self.brain._request_approval("email_reply", {"id": item["ext_id"], "body": text})
@@ -192,6 +200,7 @@ class Jarvis:
         self.awake = power.KeepAwake(lambda on: self.store.log(
             "power", "Keeping the laptop awake while plugged in" if on else "Normal sleep allowed (on battery or setting off)"))
         self.agent.start()
+        self.worker.start()
         threading.Thread(target=self._monitor, daemon=True).start()
 
     def _monitor(self):
@@ -356,6 +365,28 @@ class Api:
 
     def agent_status(self):
         return self._j.agent.status()
+
+    # ---------- prepared work
+    def jobs(self):
+        return self._j.worker.jobs()
+
+    def prepare_task(self, task_id, kind=None):
+        task = self._j.store.task(task_id)
+        if not task:
+            return "That task no longer exists."
+        kind = kind or {"presentation": "presentation", "document": "document", "notes": "notes", "revision": "revision",
+                        "spreadsheet": "spreadsheet"}.get(task["kind"], "notes")
+        job = self._j.worker.queue_task(task, kind)
+        return f"Preparing a {kind} for {task['title']}. I'll tell you when it's ready." if job else \
+            "That's already prepared or on its way."
+
+    def open_result(self, job_id):
+        """Opens a file Jarvis prepared, on the laptop (only files from Jarvis's own jobs)."""
+        job = self._j.store.job(job_id)
+        if not job or not job["result_path"] or not os.path.exists(job["result_path"]):
+            return "That file isn't there any more."
+        os.startfile(job["result_path"])
+        return f"Opened {os.path.basename(job['result_path'])} on the laptop."
 
     def agent_run_now(self):
         if self._j.agent.running:

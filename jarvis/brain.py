@@ -413,7 +413,20 @@ def t_my_task_done(id):
     return "Marked as done."
 
 
+@tool("prepare_work", "Make a finished file for the user, saved in their School Projects folder: a PowerPoint presentation, "
+      "a Word document or report, study notes, a revision sheet, or a spreadsheet. Takes a few minutes; the user is told when ready.",
+      {"kind": ("string", "presentation|document|notes|revision|spreadsheet"), "topic": ("string", "what it's about"),
+       "requirements": ("string", "everything asked for: length, slide count, what to include")}, ["kind", "topic"])
+def t_prepare(kind, topic, requirements=""):
+    if not _WORKER[0]:
+        return {"error": "not available"}
+    kind = kind if kind in ("presentation", "document", "notes", "revision", "spreadsheet") else "document"
+    _WORKER[0].queue_request(kind, f"{topic[:1].upper()}{topic[1:]} {kind}", requirements or topic)
+    return {"status": "started", "note": "Tell the user it's being prepared and they'll be told when it's ready."}
+
+
 _AGENT = [None]  # the running agent, for the task tools above
+_WORKER = [None]  # the running worker, for prepare_work
 
 
 @tool("power_laptop", "Restart or shut down the laptop after a 30-second countdown (the user confirms first)",
@@ -477,6 +490,7 @@ class Brain:
         self.source = "text"        # where the current request came from: voice, text (dashboard) or phone
         self.set_game_mode = None   # set by the app: callable(on: bool) -> str
         self.agent = None           # set by the app: the background agent (task list, checks)
+        self.worker = None          # set by the app: prepares presentations, documents and notes
 
     # ---------------- approvals
     def _request_approval(self, name, args):
@@ -701,6 +715,8 @@ class Brain:
         # the task list and the background agent
         if self.agent and (reply := self._task_command(t)) is not None:
             return reply
+        if self.worker and (reply := self._work_command(t, text)) is not None:
+            return reply
         # routines: "when I say focus mode, close discord and open notepad"
         if name := routines.match(t):
             return self._run_routine(name)
@@ -895,6 +911,74 @@ class Brain:
             self.emit("activity", {"text": "Checking your school sources"})
             return "Checked. " + self.agent.run("asked")
         return None
+
+    WORK_KINDS = {"presentation": "presentation", "powerpoint": "presentation", "slideshow": "presentation", "slides": "presentation",
+                  "slide deck": "presentation", "study notes": "notes", "notes": "notes", "revision sheet": "revision",
+                  "revision notes": "revision", "report": "document", "essay": "document", "document": "document",
+                  "word document": "document", "spreadsheet": "spreadsheet", "excel sheet": "spreadsheet"}
+
+    def _work_command(self, t, original):
+        """Prepared work: "make a 10-slide presentation about renewable energy", "summarise my biology pdf",
+        "show me the presentation", "what have you prepared"."""
+        import os
+        from .tools import files as file_tools
+        m = lambda p: re.match(p, t)
+        kinds = "|".join(sorted(self.WORK_KINDS, key=len, reverse=True))
+        if r := m(rf"^(?:make|create|prepare|build|write|do|put together)(?: me)? (?:a |an |the |my )?(?:(\d{{1,2}})[- ]?slides? )?"
+                  rf"(?:(.+?) )?({kinds})(?: (?:about|on|for|covering|of) (.+?))?(?: for me)?$"):
+            count, before, kind_word, topic = r.groups()
+            kind = self.WORK_KINDS[kind_word]
+            topic = (topic or before or "").strip()
+            task = self._match_task(topic, kind) if topic else self._match_task("", kind)
+            if task and (not topic or self._overlap(topic, task["title"]) >= 1):
+                job = self.worker.queue_task(task, kind)
+                return (f"I'm preparing the {kind} for {task['title']}. I'll tell you when it's ready."
+                        if job else f"The {kind} for {task['title']} is already prepared or on its way.")
+            if not topic:
+                return f"What should the {kind} be about?"
+            title = f"{topic[:1].upper()}{topic[1:]} {kind_word if kind == 'presentation' else kind}".strip()
+            if count:
+                original += f" ({count} slides)"
+            self.worker.queue_request(kind, title, original)
+            wait = "" if ai.agent_may_use(3) else " Today's AI budget is nearly used, so it may start after midnight UTC."
+            return f"On it: a {kind} about {topic}. It takes a few minutes; I'll tell you when it's ready.{wait}"
+        if r := m(r"^(?:summari[sz]e|make (?:study )?notes (?:on|from)|sum up) (?:the |my |this )?(.+?) ?(?:pdf|pdf file)$"):
+            hits = file_tools.search(r.group(1) + " pdf")
+            if not hits:
+                return f"I couldn't find a PDF matching {r.group(1)}."
+            path = hits[0]["path"]
+            self.worker.queue_request("pdf_summary", "Summary of " + os.path.splitext(hits[0]["name"])[0], original, {"path": path})
+            return f"Summarising {hits[0]['name']}. I'll tell you when the notes are ready."
+        if r := m(rf"^(?:show|open)(?: me)? (?:the |my )?(?:latest |new )?({kinds}|work|summary)(?: (?:you|that you|jarvis) (?:made|prepared|wrote|did))?$"):
+            kind = self.WORK_KINDS.get(r.group(1))
+            job = self.worker.latest(kind) or (self.worker.latest() if r.group(1) in ("work", "summary") else None)
+            if not job:
+                return f"I haven't prepared a {r.group(1)} yet."
+            os.startfile(job["result_path"])
+            return f"Opening {os.path.basename(job['result_path'])}."
+        if m(r"^what (?:have you|did you) (?:prepared?|made|done|finished)(?: for me)?\??$") or m(r"^what are you working on\??$"):
+            jobs = self.worker.jobs()[:5]
+            if not jobs:
+                return "I haven't prepared anything yet."
+            word = {"done": "ready", "running": "in progress", "queued": "queued", "waiting": "waiting for AI budget",
+                    "failed": "couldn't finish"}
+            return " ".join(f"{j['title']}: {word.get(j['state'], j['state'])}." for j in jobs)
+        return None
+
+    @staticmethod
+    def _overlap(a, b):
+        stop = {"the", "a", "an", "my", "on", "about", "for", "of", "and", "to", "presentation", "notes"}
+        return len((set(re.findall(r"[a-z0-9]+", a.lower())) - stop) & (set(re.findall(r"[a-z0-9]+", b.lower())) - stop))
+
+    def _match_task(self, words, kind):
+        """The open task this request is about: same kind, most words in common, most urgent first."""
+        tasks = [x for x in self.agent.task_list() if not kind or x["kind"] == kind or (kind == "notes" and x["kind"] == "revision")]
+        if not tasks:
+            return None
+        if not words:
+            return tasks[0]
+        best = max(tasks, key=lambda x: self._overlap(words, x["title"] + " " + (x["details"] or "")))
+        return best if self._overlap(words, best["title"] + " " + (best["details"] or "")) else None
 
     def _phone_command(self, t):
         """Phone requests: find it, open apps and links on it, read its notifications, start WhatsApp/Discord calls."""

@@ -69,6 +69,8 @@ DEFAULTS = {
     "ai_daily_limit": 50,            # your AI plan's daily request limit (OpenRouter free: about 50)
     "ai_chat_reserve": 15,           # requests always kept for your own chat
     "agent_last_run": 0,
+    "agent_auto_prepare": True,      # prepare drafts of new assignments (presentations, documents, notes) by itself
+    "agent_output_dir": "",          # where prepared work is saved; empty = Documents\School Projects
     "classroom_enabled": False,
     "quiet_hours": "22-7",           # no spoken reminders between these hours
     # background core and remote access

@@ -175,8 +175,29 @@ function renderTasks(list) {
   });
 }
 
+async function loadJobs() {
+  const ul = $("#jobs"); ul.innerHTML = "";
+  const states = { done: "ready", running: "working on it", queued: "queued", waiting: "waiting for AI budget", failed: "couldn't finish" };
+  const list = (await call("jobs")).slice(0, 8);
+  if (!list.length) { const li = document.createElement("li"); li.textContent = "Nothing prepared yet."; ul.appendChild(li); return; }
+  list.forEach((j) => {
+    const li = document.createElement("li");
+    const d = document.createElement("div");
+    const b = document.createElement("b"); b.textContent = j.title;
+    const s = document.createElement("small"); s.textContent = `${j.kind} · ${states[j.state] || j.state}`;
+    d.append(b, s); li.appendChild(d);
+    if (j.state === "done") {
+      const o = document.createElement("button"); o.textContent = "Open on laptop";
+      o.onclick = async () => { try { toast(await call("open_result", j.id)); } catch (e) { toast(e.message); } };
+      li.appendChild(o);
+    }
+    ul.appendChild(li);
+  });
+}
+
 async function loadTasks() {
   try {
+    loadJobs().catch(() => {});
     renderTasks(await call("tasks"));
     const s = await call("agent_status");
     const last = s.last_run ? new Date(s.last_run * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "never";

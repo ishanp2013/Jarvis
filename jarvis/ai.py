@@ -145,5 +145,13 @@ def parse_json(text):
         elif ch in "]}":
             depth -= 1
             if depth == 0:
-                return json.loads(text[start:i + 1])
+                return _loads(text[start:i + 1])
     raise ValueError("the JSON in the reply was cut off")
+
+
+def _loads(s):
+    """json.loads, forgiving the slips models often make: line breaks inside strings, trailing commas."""
+    try:
+        return json.loads(s, strict=False)
+    except ValueError:
+        return json.loads(re.sub(r",\s*([\]}])", r"\1", s), strict=False)
