@@ -875,5 +875,161 @@ class PhoneControlTests(RouterBase):
             self.assertIn("can't reach your POCO F1", self.ask("find my phone"))
 
 
+class AgentTests(unittest.TestCase):
+    """The background agent, with every source and the AI faked."""
+
+    def setUp(self):
+        import datetime as dt
+        from jarvis.agent import core, sources, triage
+        self.dt, self.core, self.sources, self.triage = dt, core, sources, triage
+        self.store = Store(Path(tempfile.mkdtemp()) / "t.db")
+        self.notes, self.cards, self.sent_to_ai = [], [], []
+        self.agent = core.Agent(self.store, lambda text, important=False: self.notes.append((text, important)),
+                                lambda item, text: self.cards.append((item["ext_id"], text)))
+        values = {"agent_school_senders": "@school.edu\nClass 10B", "agent_last_run": 0}
+        p = mock.patch.object(settings, "get", lambda k, d=None: values.get(k, settings._data.get(k, d)))
+        p.start()
+        self.addCleanup(p.stop)
+        u = mock.patch.object(settings, "update", lambda v: values.update(v))
+        u.start()
+        self.addCleanup(u.stop)
+        self.items = [
+            {"source": "gmail", "ext_id": "m1", "sender": "Ms Rao", "address": "rao@school.edu", "title": "Science project",
+             "text": "Prepare a 10-slide presentation about renewable energy for next Thursday."},
+            {"source": "gmail", "ext_id": "m2", "sender": "Shop", "address": "deals@shop.com", "title": "50% off", "text": "Sale!"},
+            {"source": "phone", "ext_id": "WhatsApp|Class 10B|d", "sender": "Class 10B", "group": "Class 10B",
+             "title": "WhatsApp: Class 10B", "text": ""},
+        ]
+
+        def fake_triage(batch, today=None):
+            self.sent_to_ai.append([it["ext_id"] for it in batch])
+            return {0: {"category": "assignment", "importance": 4, "summary": "Science presentation on renewable energy",
+                        "deadline": "2026-11-19", "needs_reply": True, "reply": "Thank you, I'll have it ready.",
+                        "task": {"title": "Science presentation: renewable energy", "type": "presentation",
+                                 "requirements": "10 slides", "due": "2026-11-19"}},
+                    1: {"category": "announcement", "importance": 2, "summary": "Class group chat", "deadline": None,
+                        "needs_reply": False, "reply": None, "task": None}}
+        self.patches = [mock.patch.object(sources, "COLLECTORS", {"fake": (lambda: True, lambda: [dict(i) for i in self.items])}),
+                        mock.patch.object(triage, "triage", fake_triage),
+                        mock.patch.object(core.ai, "agent_may_use", lambda n=1: True),
+                        mock.patch.object(core.google, "read_mail", lambda i: {"body": "full text"})]
+        for x in self.patches:
+            x.start()
+            self.addCleanup(x.stop)
+
+    def test_only_school_items_reach_the_ai(self):
+        summary = self.agent.run()
+        self.assertEqual(self.sent_to_ai, [["m1", "WhatsApp|Class 10B|d"]])  # the shop email never goes to the AI
+        self.assertIn("3 new items", summary)
+        self.assertIn("2 from school", summary)
+        tasks = self.store.tasks()
+        self.assertEqual([(t["title"], t["kind"], t["due"]) for t in tasks],
+                         [("Science presentation: renewable energy", "presentation", "2026-11-19")])
+        self.assertEqual(self.cards, [("m1", "Thank you, I'll have it ready.")])  # a draft card, never sent by itself
+        self.assertTrue(any("New task" in n and imp for n, imp in self.notes))
+        # a second run sees nothing new and adds nothing twice
+        self.agent.run()
+        self.assertEqual(len(self.sent_to_ai), 1)
+        self.assertEqual(len(self.store.tasks()), 1)
+
+    def test_out_of_budget_waits(self):
+        with mock.patch.object(self.core.ai, "agent_may_use", lambda n=1: False):
+            summary = self.agent.run()
+        self.assertEqual(self.sent_to_ai, [])
+        self.assertIn("2 waiting for AI budget", summary)
+        self.assertFalse(self.store.seen("gmail", "m1"))  # retried later
+        self.assertTrue(self.store.seen("gmail", "m2"))   # non-school: just counted
+
+    def test_reminders_once(self):
+        tomorrow = (self.dt.date(2026, 11, 13)).isoformat()
+        self.store.add_task("Maths worksheet", due=tomorrow)
+        at = self.dt.datetime(2026, 11, 12, 17, 0)
+        self.agent.reminders(at)
+        self.agent.reminders(at)
+        self.assertEqual([n for n, _ in self.notes], ["Reminder: Maths worksheet is due tomorrow."])
+
+    def test_school_matching(self):
+        pats = ["@school.edu", "class 10b"]
+        self.assertTrue(self.sources.is_school({"source": "gmail", "address": "x@school.edu"}, pats))
+        self.assertTrue(self.sources.is_school({"source": "classroom"}, []))
+        self.assertFalse(self.sources.is_school({"source": "gmail", "address": "x@gmail.com", "sender": "Bob"}, pats))
+
+
+class TriageParsingTests(unittest.TestCase):
+    def test_dates(self):
+        import datetime as dt
+        from jarvis.agent import dates
+        today = dt.date(2026, 11, 12)  # a Thursday
+        self.assertEqual(dates.parse("by Thursday", today), "2026-11-19")
+        self.assertEqual(dates.parse("tomorrow", today), "2026-11-13")
+        self.assertEqual(dates.parse("next week", today), "2026-11-16")
+        self.assertEqual(dates.parse("20 Nov", today), "2026-11-20")
+        self.assertEqual(dates.parse("Dec 3rd", today), "2026-12-03")
+        self.assertEqual(dates.parse("5/1", today), "2026-01-05")
+        self.assertIsNone(dates.parse("the sun is a star", today))
+        self.assertEqual(dates.say("2026-11-13", today), "tomorrow")
+        self.assertTrue(dates.say("2026-11-10", today).startswith("overdue"))
+        self.assertGreater(dates.priority({"due": "2026-11-13", "importance": 3}, today),
+                           dates.priority({"due": "2026-12-20", "importance": 3}, today))
+
+    def test_json_from_messy_replies(self):
+        from jarvis import ai
+        self.assertEqual(ai.parse_json('Sure!\n```json\n[{"i": 1, "summary": "say \\"hi\\" [ok]"}]\n```'),
+                         [{"i": 1, "summary": 'say "hi" [ok]'}])
+        with self.assertRaises(ValueError):
+            ai.parse_json("no json here")
+        with self.assertRaises(ValueError):
+            ai.parse_json('[{"i": 1, "summary": "cut')
+
+    def test_bad_results_are_dropped(self):
+        from jarvis.agent import triage
+        out = triage._clean([{"i": 1, "category": "assignment", "importance": 9, "deadline": "2026-11-19",
+                              "task": {"title": "Essay", "type": "poem", "due": None}},
+                             {"i": 7, "category": "test"}, "junk", {"i": 2, "category": "weird", "needs_reply": True}], 2)
+        self.assertEqual(out[1]["importance"], 5)
+        self.assertEqual(out[1]["task"]["type"], "other")
+        self.assertEqual(out[1]["task"]["due"], "2026-11-19")  # falls back to the item's deadline
+        self.assertEqual(out[2]["category"], "info")
+        self.assertIsNone(out[2]["reply"])
+        self.assertNotIn(7, out)
+
+    def test_budget(self):
+        from jarvis import ai
+        tmp = Path(tempfile.mkdtemp()) / "usage.json"
+        values = {"ai_daily_limit": 50, "agent_daily_budget": 25, "ai_chat_reserve": 15}
+        with mock.patch.object(ai, "USAGE_FILE", tmp), mock.patch.object(ai.providers, "is_cloud", lambda: True), \
+                mock.patch.object(ai.providers, "available", lambda: True), \
+                mock.patch.object(settings, "get", lambda k, d=None: values.get(k, settings._data.get(k, d))):
+            self.assertTrue(ai.agent_may_use())
+            for _ in range(25):
+                ai.count("agent")
+            self.assertFalse(ai.agent_may_use())  # its own share used up
+            values["agent_daily_budget"] = 100
+            for _ in range(10):
+                ai.count("chat")
+            self.assertFalse(ai.agent_may_use())  # 35 used: the last 15 stay for chat
+            values["ai_daily_limit"] = 1000
+            self.assertTrue(ai.agent_may_use())
+            ai.mark_exhausted()
+            self.assertFalse(ai.agent_may_use())
+
+
+class TaskCommandTests(RouterBase):
+    def setUp(self):
+        super().setUp()
+        from jarvis.agent.core import Agent
+        self.brain.agent = Agent(self.brain.store, lambda *a, **k: None)
+
+    def test_add_list_and_finish(self):
+        self.assertIn("due", self.ask("add a task maths worksheet by friday"))
+        self.assertIn("Added Call gran", self.ask("remind me to call gran tomorrow"))
+        reply = self.ask("what's due")
+        self.assertIn("2 open tasks", reply)
+        self.assertIn("Maths worksheet", reply)
+        self.assertIn("Marked Maths worksheet as done", self.ask("mark the maths worksheet as done"))
+        self.assertIn("1 open task", self.ask("what are my tasks"))
+        self.assertIn("couldn't find a task", self.ask("i've finished the history essay"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

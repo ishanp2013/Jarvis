@@ -297,6 +297,28 @@ Install **KDE Connect** on the laptop (Microsoft Store) and on the phone (Play S
 - **Reading full chat history:** notifications are the only official window into messages, so Jarvis sees what's on the phone's notification shade.
 - **Phone battery level:** KDE Connect doesn't offer it to other programs on Windows.
 
+## 7m. The background agent (school assignments, tests and deadlines)
+
+Every 45 minutes (Tasks tab → *Check every*), and when you press **Check school now** or say "check for new assignments", Jarvis:
+1. **Collects** what's new:
+   - **Google Classroom:** classwork and announcements.
+   - **Gmail** and Outlook.
+   - **Phone notifications** from WhatsApp groups and similar, through KDE Connect.
+   - **Discord** channels you selected.
+2. **Keeps school items only.** It sends to the AI only items from Google Classroom and from the senders and groups in your **school list** (Tasks tab → *School senders and groups*: one per line, e.g. `@yourschool.edu`, a teacher's address, a WhatsApp group name). Everything else is just counted and never leaves your laptop.
+3. **Understands them.** One AI request handles a batch: assignment, test, announcement or request; importance; the real due date ("next Thursday" becomes a date); and exactly what's asked (topic, slide count, what to include). Instructions hidden inside messages are ignored.
+4. **Keeps your task list.** Assignments and tests become tasks, sorted by urgency. Add your own ("add a task maths worksheet by Friday"), ask "what's due?", say "mark the maths worksheet as done".
+5. **Drafts replies.** For school emails that need an answer, a draft appears as an approval card, with blanks like "[will / won't]" where only you can decide. It is never sent without your tap.
+6. **Reminds you.** The afternoon before a deadline and the morning of it, on the dashboard and your phone, and spoken if you're at the laptop. Never during quiet hours (22:00–07:00) or in game mode.
+
+**Free AI budget:** each check uses about one request per 10 school items. The agent stops at 25 a day (Tasks tab) and always leaves 15 for your own questions. If the limit is reached, items wait and are handled after midnight UTC. Nothing is lost.
+
+**Google Classroom setup** (school account):
+1. In Google Cloud (the same project as Gmail): **APIs & Services → Library → Google Classroom API → Enable**.
+2. **Google Auth Platform → Audience → Test users**: add your **school** email.
+3. Jarvis → Connections → **Google Classroom → Sign in with school account**, then pick your school account.
+4. Some schools block outside apps; Google then shows "Access blocked", and only the school's IT admin can allow it. Jarvis still gets Classroom news through Classroom's emails and phone notifications.
+
 ## 8. Safety rules built in
 
 - **Closing apps** and **sending** email, Discord, Slack, Telegram, WhatsApp messages or GitHub issues happen straight away when you ask, as you chose. Turn either back on under Settings → Confirmations.

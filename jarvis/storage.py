@@ -57,9 +57,66 @@ class Store:
             CREATE TABLE IF NOT EXISTS activity(id INTEGER PRIMARY KEY, ts REAL, kind TEXT, text TEXT);
             CREATE TABLE IF NOT EXISTS devices(id INTEGER PRIMARY KEY, name TEXT, token_hash TEXT UNIQUE,
                                                created REAL, last_seen REAL);
+            CREATE TABLE IF NOT EXISTS items(id INTEGER PRIMARY KEY, source TEXT, ext_id TEXT, ts REAL, sender TEXT,
+                title TEXT, school INTEGER, category TEXT, importance INTEGER, summary TEXT, needs_reply INTEGER,
+                deadline TEXT, reply TEXT, url TEXT, UNIQUE(source, ext_id));
+            CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY, title TEXT, details TEXT, kind TEXT, due TEXT,
+                importance INTEGER, status TEXT, source TEXT, source_ref TEXT, created REAL, updated REAL,
+                result_path TEXT, reminded TEXT DEFAULT '');
             """
         )
         self._db.commit()
+
+    # ---- what the agent has seen (so nothing is processed twice)
+    def seen(self, source, ext_id):
+        return bool(self._query("SELECT 1 FROM items WHERE source=? AND ext_id=?", (source, str(ext_id))))
+
+    def add_item(self, it):
+        cur = self._exec("INSERT OR IGNORE INTO items(source, ext_id, ts, sender, title, school, url) VALUES(?,?,?,?,?,?,?)",
+                         (it["source"], str(it["ext_id"]), time.time(), redact(it.get("sender", ""))[:200],
+                          redact(it.get("title", ""))[:300], int(bool(it.get("school"))), it.get("url", "")))
+        return cur.lastrowid
+
+    def update_item(self, item_id, **f):
+        cols = [k for k in f if k in ("category", "importance", "summary", "needs_reply", "deadline", "reply")]
+        if cols:
+            self._exec(f"UPDATE items SET {', '.join(c + '=?' for c in cols)} WHERE id=?",
+                       [redact(f[c]) if isinstance(f[c], str) else f[c] for c in cols] + [item_id])
+
+    def items_since(self, ts):
+        rows = self._query("SELECT id, source, ts, sender, title, school, category, importance, summary, needs_reply, "
+                           "deadline, reply, url FROM items WHERE ts>=? ORDER BY ts DESC", (ts,))
+        keys = ("id", "source", "ts", "sender", "title", "school", "category", "importance", "summary", "needs_reply",
+                "deadline", "reply", "url")
+        return [dict(zip(keys, r)) for r in rows]
+
+    # ---- the task list
+    _TASK_COLS = ("id", "title", "details", "kind", "due", "importance", "status", "source", "source_ref", "created",
+                  "updated", "result_path", "reminded")
+
+    def add_task(self, title, details="", kind="other", due=None, importance=3, source="you", source_ref=""):
+        if source_ref and self._query("SELECT 1 FROM tasks WHERE source_ref=?", (source_ref,)):
+            return None  # already on the list
+        now = time.time()
+        cur = self._exec("INSERT INTO tasks(title, details, kind, due, importance, status, source, source_ref, created, updated) "
+                         "VALUES(?,?,?,?,?,?,?,?,?,?)", (redact(title)[:200], redact(details or "")[:2000], kind, due,
+                                                         int(importance), "open", source, source_ref, now, now))
+        return cur.lastrowid
+
+    def tasks(self, status=("open",)):
+        marks = ",".join("?" * len(status))
+        rows = self._query(f"SELECT {', '.join(self._TASK_COLS)} FROM tasks WHERE status IN ({marks})", tuple(status))
+        return [dict(zip(self._TASK_COLS, r)) for r in rows]
+
+    def task(self, task_id):
+        rows = self._query(f"SELECT {', '.join(self._TASK_COLS)} FROM tasks WHERE id=?", (int(task_id),))
+        return dict(zip(self._TASK_COLS, rows[0])) if rows else None
+
+    def update_task(self, task_id, **f):
+        cols = [k for k in f if k in ("title", "details", "kind", "due", "importance", "status", "result_path", "reminded")]
+        if cols:
+            self._exec(f"UPDATE tasks SET {', '.join(c + '=?' for c in cols)}, updated=? WHERE id=?",
+                       [f[c] for c in cols] + [time.time(), int(task_id)])
 
     # paired phones: only a hash of each device's token is stored
     @staticmethod

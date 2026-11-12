@@ -126,3 +126,15 @@ body { overflow-x: hidden; }
 @media (max-width: 1150px) { main { grid-template-columns: 220px minmax(0, 1fr) 320px; gap: 10px; padding: 10px; } }
 @media (max-width: 960px) { main { grid-template-columns: 190px minmax(0, 1fr) 280px; } .round { width: 62px; height: 62px; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* tasks */
+.tasks { list-style: none; padding: 0; margin: 8px 0 14px; }
+.tasks li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 10px; margin-bottom: 6px;
+  border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 8px; }
+.tasks li.urgent { border-left-color: var(--danger); }
+.tasks li.soon { border-left-color: var(--warn); }
+.tasks li b { display: block; font-weight: 600; font-size: 13.5px; }
+.tasks li small { color: var(--muted); font-size: 12px; }
+.tasks li span { display: flex; gap: 6px; flex: none; }
+label textarea { width: 100%; color: var(--text); font-size: 13px; resize: vertical; }
+.err { color: var(--danger); }

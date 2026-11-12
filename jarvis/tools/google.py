@@ -27,25 +27,32 @@ from ..config import HOME, get_secret, settings
 SCOPES = ["openid", "email", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send",
           "https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.readonly",
           "https://www.googleapis.com/auth/tasks", "https://www.googleapis.com/auth/drive.readonly"]
+# Your school account is signed in separately and only for Google Classroom (read-only).
+CLASSROOM_SCOPES = ["openid", "email", "https://www.googleapis.com/auth/classroom.courses.readonly",
+                    "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
+                    "https://www.googleapis.com/auth/classroom.announcements.readonly"]
 AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN = "https://oauth2.googleapis.com/token"
 TOKEN_FILE = HOME / "google_token.bin"
+ACCOUNTS = {"personal": {"file": TOKEN_FILE, "scopes": SCOPES, "flag": "google_enabled"},
+            "school": {"file": HOME / "google_school_token.bin", "scopes": CLASSROOM_SCOPES, "flag": "classroom_enabled"}}
 _lock = threading.Lock()
 
 
 # ------------------------------------------------------------------ tokens
-def _load():
-    if not TOKEN_FILE.exists():
+def _load(acct="personal"):
+    f = ACCOUNTS[acct]["file"]
+    if not f.exists():
         return {}
     try:
-        return json.loads(win32crypt.CryptUnprotectData(TOKEN_FILE.read_bytes(), None, None, None, 0)[1])
+        return json.loads(win32crypt.CryptUnprotectData(f.read_bytes(), None, None, None, 0)[1])
     except Exception:
-        TOKEN_FILE.unlink(missing_ok=True)
+        f.unlink(missing_ok=True)
         return {}
 
 
-def _save(tok):
-    TOKEN_FILE.write_bytes(win32crypt.CryptProtectData(json.dumps(tok).encode(), "jarvis-google", None, None, None, 0))
+def _save(tok, acct="personal"):
+    ACCOUNTS[acct]["file"].write_bytes(win32crypt.CryptProtectData(json.dumps(tok).encode(), "jarvis-google", None, None, None, 0))
 
 
 def _client():
@@ -55,7 +62,7 @@ def _client():
     return cid, secret
 
 
-def connect(timeout=300):
+def connect(timeout=300, acct="personal"):
     """Opens Google's sign-in page and waits for the result on a one-time local port."""
     cid, secret = _client()
     verifier = secrets.token_urlsafe(64)
@@ -82,9 +89,9 @@ def connect(timeout=300):
     srv = HTTPServer(("127.0.0.1", 0), Handler)
     redirect = f"http://127.0.0.1:{srv.server_address[1]}"
     webbrowser.open(AUTH + "?" + urllib.parse.urlencode({
-        "client_id": cid, "redirect_uri": redirect, "response_type": "code", "scope": " ".join(SCOPES),
+        "client_id": cid, "redirect_uri": redirect, "response_type": "code", "scope": " ".join(ACCOUNTS[acct]["scopes"]),
         "code_challenge": challenge, "code_challenge_method": "S256", "state": state,
-        "access_type": "offline", "prompt": "consent"}))
+        "access_type": "offline", "prompt": "consent select_account"}))
     srv.timeout = 2
     deadline = time.time() + timeout
     try:
@@ -100,31 +107,32 @@ def connect(timeout=300):
         raise RuntimeError(f"Google sign-in failed: {r.text[:200]}")
     tok = r.json()
     tok["expires_at"] = time.time() + tok.get("expires_in", 3600) - 60
-    _save(tok)
-    settings.update({"google_enabled": True})
-    return account_name()
+    _save(tok, acct)
+    settings.update({ACCOUNTS[acct]["flag"]: True})
+    return account_name(acct)
 
 
-def disconnect():
-    tok = _load()
+def disconnect(acct="personal"):
+    tok = _load(acct)
     if tok.get("refresh_token"):
         try:  # also revoke it at Google, so the old token can't be used anywhere
             httpx.post("https://oauth2.googleapis.com/revoke", data={"token": tok["refresh_token"]}, timeout=10)
         except httpx.HTTPError:
             pass
-    TOKEN_FILE.unlink(missing_ok=True)
-    settings.update({"google_enabled": False})
+    ACCOUNTS[acct]["file"].unlink(missing_ok=True)
+    settings.update({ACCOUNTS[acct]["flag"]: False})
 
 
-def connected():
-    return bool(settings.get("google_enabled") and _load().get("refresh_token"))
+def connected(acct="personal"):
+    return bool(settings.get(ACCOUNTS[acct]["flag"]) and _load(acct).get("refresh_token"))
 
 
-def _token():
+def _token(acct="personal"):
     with _lock:
-        tok = _load()
+        tok = _load(acct)
         if not tok.get("refresh_token"):
-            raise RuntimeError("Google isn't connected. Sign in under Connections.")
+            raise RuntimeError("Google isn't connected. Sign in under Connections." if acct == "personal" else
+                               "Google Classroom isn't connected. Sign in with your school account under Connections.")
         if time.time() < tok.get("expires_at", 0):
             return tok["access_token"]
         cid, secret = _client()
@@ -134,12 +142,12 @@ def _token():
             raise RuntimeError("Google sign-in has expired. Reconnect it under Connections.")
         new = r.json()
         tok.update(access_token=new["access_token"], expires_at=time.time() + new.get("expires_in", 3600) - 60)
-        _save(tok)
+        _save(tok, acct)
         return tok["access_token"]
 
 
-def _req(method, url, **kw):
-    r = httpx.request(method, url, headers={"Authorization": f"Bearer {_token()}"}, timeout=20, **kw)
+def _req(method, url, acct="personal", **kw):
+    r = httpx.request(method, url, headers={"Authorization": f"Bearer {_token(acct)}"}, timeout=20, **kw)
     if r.status_code >= 400:
         try:
             msg = r.json()["error"]["message"]
@@ -147,7 +155,8 @@ def _req(method, url, **kw):
             msg = r.text[:200]
         if "has not been used in project" in msg or "is disabled" in msg:
             api = next((n for k, n in (("gmail", "Gmail API"), ("calendar", "Google Calendar API"),
-                                       ("tasks", "Google Tasks API"), ("drive", "Google Drive API")) if k in msg.lower()), "that API")
+                                       ("tasks", "Google Tasks API"), ("drive", "Google Drive API"),
+                                       ("classroom", "Google Classroom API")) if k in msg.lower()), "that API")
             raise RuntimeError(f"The {api} is switched off in your Google Cloud project. Turn it on under "
                                f"APIs & Services, Library, wait a minute, then ask again")
         if r.status_code == 403 and "insufficient" in msg.lower():
@@ -157,8 +166,8 @@ def _req(method, url, **kw):
     return r.json() if r.content else {}
 
 
-def account_name():
-    return _req("GET", "https://openidconnect.googleapis.com/v1/userinfo").get("email", "")
+def account_name(acct="personal"):
+    return _req("GET", "https://openidconnect.googleapis.com/v1/userinfo", acct).get("email", "")
 
 
 # ------------------------------------------------------------------ Gmail

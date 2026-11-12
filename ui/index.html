@@ -65,6 +65,7 @@
   <section class="col wide">
     <nav class="tabs">
       <button data-tab="chat" class="active">Conversation</button>
+      <button data-tab="tasks">Tasks</button>
       <button data-tab="activity">Activity</button>
       <button data-tab="settings">Settings</button>
       <button data-tab="connect">Connections</button>
@@ -72,6 +73,29 @@
 
     <div class="panel tab grow" id="tab-chat">
       <div id="chat"></div>
+    </div>
+
+    <div class="panel tab grow hidden scroll" id="tab-tasks">
+      <div class="row"><h2>Tasks</h2><button class="ghost small" id="agent-run">Check school now</button></div>
+      <form id="task-add" class="secret-row" autocomplete="off">
+        <input id="task-title" placeholder="Add a task, e.g. Maths worksheet" maxlength="200">
+        <input id="task-due" placeholder="due (Friday, 20 Nov…)" maxlength="40" style="max-width:150px">
+        <button class="small">Add</button>
+      </form>
+      <ul id="tasks" class="tasks"></ul>
+      <h3>Background agent</h3>
+      <div class="kv"><span>Last check</span><b id="ag-last">-</b></div>
+      <div class="kv"><span>Next check</span><b id="ag-next">-</b></div>
+      <div class="kv"><span>AI used today</span><b id="ag-usage">-</b></div>
+      <p class="muted" id="ag-summary"></p>
+      <p class="muted err" id="ag-problems"></p>
+      <label class="check"><input type="checkbox" data-set="agent_enabled"> Check my school sources in the background</label>
+      <label>Check every (minutes) <input type="number" min="15" max="240" data-set="agent_interval_min"></label>
+      <label>School senders and groups, one per line
+        <textarea data-set="agent_school_senders" rows="5" placeholder="@yourschool.edu&#10;teacher@school.org&#10;Ms Rao&#10;Class 10B (WhatsApp group name)"></textarea>
+        <small>Only items from these (and Google Classroom) are read by the AI. Everything else is just counted.</small></label>
+      <label>AI requests per day for the agent <input type="number" min="0" max="500" data-set="agent_daily_budget"></label>
+      <label>Your AI plan's daily limit <input type="number" min="10" max="10000" data-set="ai_daily_limit"><small>OpenRouter's free models: about 50. Jarvis always keeps some for your own questions.</small></label>
     </div>
 
     <div class="panel tab grow hidden" id="tab-activity">
@@ -237,6 +261,12 @@
         <label>OAuth client secret <span class="secret-row"><input type="password" data-secret="google_client_secret" placeholder="paste secret, then Save"><button class="small" data-save-secret="google_client_secret">Save</button></span></label>
         <div class="row"><span id="google-status" class="muted"></span>
           <span><button class="small" id="google-connect">Sign in</button> <button class="small danger" id="google-disconnect">Disconnect</button></span></div>
+      </div>
+      <div class="card">
+        <h3>Google Classroom (school account)</h3>
+        <p class="muted">Read-only: your classes, classwork with due dates, and announcements. Sign in with your <b>school</b> Google account. It uses the same OAuth client as above. First enable the <b>Google Classroom API</b> in your Google Cloud project, and add your school address under Test users. Some schools block outside apps; Google then says so, and only the school can allow it.</p>
+        <div class="row"><span id="classroom-status" class="muted"></span>
+          <span><button class="small" id="classroom-connect">Sign in with school account</button> <button class="small danger" id="classroom-disconnect">Disconnect</button></span></div>
       </div>
       <div class="card">
         <h3>GitHub</h3>

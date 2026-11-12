@@ -61,6 +61,16 @@ DEFAULTS = {
     "history_turns": 8,
     "stream_replies": True,          # start speaking while the AI is still writing its answer
     "vision_model": "",              # model for "what's on my screen"; empty = the chat model (OpenRouter picks a free one)
+    # background agent
+    "agent_enabled": True,
+    "agent_interval_min": 45,        # how often it checks Classroom, Gmail and phone notifications
+    "agent_school_senders": "",      # one per line: teacher emails, @school-domain, WhatsApp group names
+    "agent_daily_budget": 25,        # AI requests per day the agent may use
+    "ai_daily_limit": 50,            # your AI plan's daily request limit (OpenRouter free: about 50)
+    "ai_chat_reserve": 15,           # requests always kept for your own chat
+    "agent_last_run": 0,
+    "classroom_enabled": False,
+    "quiet_hours": "22-7",           # no spoken reminders between these hours
     # background core and remote access
     "port": 8765,                    # local server for the dashboard, the orb and the phone
     "keep_awake_on_ac": True,        # stop idle sleep while plugged in, so background work and the phone keep working

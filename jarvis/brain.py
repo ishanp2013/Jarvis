@@ -17,7 +17,7 @@ import uuid
 
 import httpx
 
-from . import providers
+from . import ai, providers
 from .config import get_secret, settings
 from .tools import (discord, files, games, github, google, home, layout, microsoft, notion, outlook_classic, routines,
                     phone, screen, slack, smalltalk, spotify, telegram, uia, weather, web, whatsapp, youtube)
@@ -388,6 +388,34 @@ def t_phone_notes():
     return phone.notifications()
 
 
+@tool("my_tasks", "The user's own task list (assignments, tests, to-dos Jarvis tracks), most urgent first")
+def t_my_tasks():
+    return [{"id": x["id"], "title": x["title"], "due": x["due_text"], "type": x["kind"], "details": (x["details"] or "")[:300]}
+            for x in _AGENT[0].task_list()] if _AGENT[0] else []
+
+
+@tool("my_task_add", "Add a task to the user's own task list", {"title": ("string", "the task"),
+      "due": ("string", "when it's due, e.g. Friday, 20 Nov, tomorrow; empty if none")}, ["title"])
+def t_my_task_add(title, due=""):
+    from .agent import dates
+    if not _AGENT[0]:
+        return {"error": "not available"}
+    d = dates.parse(due) if due else None
+    _AGENT[0].store.add_task(title, due=d, source="you")
+    return f"Added {title}" + (f", due {dates.say(d)}." if d else ".")
+
+
+@tool("my_task_done", "Mark one of the user's own tasks as done", {"id": ("integer", "task id from my_tasks")}, ["id"])
+def t_my_task_done(id):
+    if not _AGENT[0]:
+        return {"error": "not available"}
+    _AGENT[0].store.update_task(int(id), status="done")
+    return "Marked as done."
+
+
+_AGENT = [None]  # the running agent, for the task tools above
+
+
 @tool("power_laptop", "Restart or shut down the laptop after a 30-second countdown (the user confirms first)",
       {"action": ("string", "restart|shutdown")}, ["action"], approval="voice")
 def t_power(action):
@@ -448,6 +476,7 @@ class Brain:
         self._live = None           # while streaming: receives the AI's reply text as it's written
         self.source = "text"        # where the current request came from: voice, text (dashboard) or phone
         self.set_game_mode = None   # set by the app: callable(on: bool) -> str
+        self.agent = None           # set by the app: the background agent (task list, checks)
 
     # ---------------- approvals
     def _request_approval(self, name, args):
@@ -669,6 +698,9 @@ class Brain:
         # the phone (through KDE Connect)
         if (reply := self._phone_command(t)) is not None:
             return reply
+        # the task list and the background agent
+        if self.agent and (reply := self._task_command(t)) is not None:
+            return reply
         # routines: "when I say focus mode, close discord and open notepad"
         if name := routines.match(t):
             return self._run_routine(name)
@@ -830,6 +862,39 @@ class Brain:
         if self._llm_available():
             return None
         return self._offline_fallback(t)
+
+    def _task_command(self, t):
+        from .agent import dates
+        m = lambda p: re.match(p, t)
+        when = r"(?: (?:this week|today|tomorrow|soon|coming up))?"
+        if m(rf"^what(?:'s| is| have i got| do i have)(?: got)? (?:due|coming up|left to do){when}\??$") \
+                or m(r"^what (?:do i|have i got to|should i) (?:need to )?(?:do|work on)(?: next| today| now)?\??$") \
+                or m(rf"^(?:what are |show |list |read |check )?(?:me )?(?:my )?(?:tasks|assignments|homework|deadlines|to ?do list){when}\??$"):
+            return self.agent.summary()
+        if r := m(r"^(?:add (?:a )?task(?: to)?|add to my (?:to ?do list|tasks)|remind me to|put on my list) (.+?)"
+                  r"(?: (?:by|due|for|on|before) (.+))?$"):
+            title, due_text = r.group(1).strip(" ,"), r.group(2) or ""
+            due = dates.parse(due_text) if due_text else None
+            if not due and (due := dates.parse(title)):  # "remind me to call gran tomorrow"
+                title = re.sub(r"\s*\b(today|tomorrow|tonight|next week|on \w+day|\w+day)$", "", title).strip() or title
+            title = title[:1].upper() + title[1:]
+            self.store.add_task(title, due=due, source="you")
+            self.store.log("task", f"Added task: {title}")
+            return f"Added {title}" + (f", due {dates.say(due)}." if due else " to your tasks.")
+        if r := m(r"^(?:mark|tick off|check off|cross off) (?:the |my )?(.+?)(?: task)?(?: as)? (?:done|complete|completed|finished)$") \
+                or m(r"^i(?:'ve| have)? (?:finished|done|completed|submitted|handed in) (?:the |my )?(.+)$"):
+            words = set(re.findall(r"[a-z0-9]+", r.group(1))) - {"the", "my", "a", "task"}
+            best = max(self.agent.task_list(), key=lambda x: len(words & set(re.findall(r"[a-z0-9]+", x["title"].lower()))), default=None)
+            if not best or not words & set(re.findall(r"[a-z0-9]+", best["title"].lower())):
+                return f"I couldn't find a task matching {r.group(1)}."
+            self.store.update_task(best["id"], status="done")
+            self.store.log("task", f"Done: {best['title']}")
+            return f"Marked {best['title']} as done. Nice work."
+        if m(r"^(?:check (?:my )?(?:school|classroom|assignments|homework)(?: stuff)?(?: now)?|check for (?:new )?(?:assignments|homework)"
+             r"|run the agent|any new (?:assignments|homework))\??$"):
+            self.emit("activity", {"text": "Checking your school sources"})
+            return "Checked. " + self.agent.run("asked")
+        return None
 
     def _phone_command(self, t):
         """Phone requests: find it, open apps and links on it, read its notifications, start WhatsApp/Discord calls."""
@@ -1004,6 +1069,8 @@ class Brain:
             msg = str(e)
             log.warning("LLM error: %s", msg)
             if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "rate limit" in msg.lower():
+                if "per-day" in msg.lower() or "daily" in msg.lower() or "free-models-per-day" in msg.lower():
+                    ai.mark_exhausted()
                 return "I've reached the AI usage limit for now. Basic desktop commands still work.", []
             if "402" in msg or "credit" in msg.lower() or "insufficient" in msg.lower() or "quota" in msg.lower():
                 return f"Your {p['label']} account is out of credit. Basic desktop commands still work.", []
@@ -1041,6 +1108,7 @@ class Brain:
                     for m in self._history() if m["text"]]
         contents.append(types.Content(role="user", parts=[types.Part(text=text)]))
         for _ in range(6):
+            ai.count("chat")
             if self._live:
                 parts, reply = [], ""
                 for chunk in client.models.generate_content_stream(model=settings["gemini_model"], contents=contents, config=config):
@@ -1159,6 +1227,7 @@ class Brain:
         msgs.append({"role": "user", "content": text})
         tools = self._openai_tools()
         for _ in range(8):
+            ai.count("chat")
             body = {"model": providers.model(p), "messages": msgs, "tools": tools}
             if self._live:
                 msg = self._openai_stream(url, headers, body)
@@ -1204,6 +1273,7 @@ class Brain:
         messages = history + [{"role": "user", "content": text}]
         extra = self._anthropic_extra(model)
         for _ in range(8):
+            ai.count("chat")
             kw = dict(model=model, max_tokens=16000, system=self._system(), tools=tools, messages=messages, **extra)
             if self._live:
                 with client.beta.messages.stream(**kw) as s:
@@ -1257,6 +1327,7 @@ class Brain:
         prompt = (f"This is a screenshot of my Windows screen. {question}\nAnswer in 1 to 4 short sentences, plain text, "
                   "no markdown, since your answer is spoken aloud.")
         override = (settings.get("vision_model") or "").strip()
+        ai.count("chat")
         try:
             if p["kind"] == "gemini":
                 from google import genai

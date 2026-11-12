@@ -58,6 +58,12 @@ It is built to stay light on a mid-range laptop (it was developed on a Ryzen 5 3
 - **Offline:** if the laptop is asleep, the phone app says so instead of pretending.
 - **Phone from the laptop** (KDE Connect): find my phone, open apps and links on the phone, read its notifications ("who messaged me?"), open a WhatsApp chat to call someone. Unlocking the phone is never attempted.
 
+**Background agent**
+- **What it watches:** Google Classroom, Gmail/Outlook, phone notifications (WhatsApp groups) and Discord, every 45 minutes.
+- **What it does:** it understands assignments, tests and announcements (not just keywords), works out real due dates, keeps a prioritised task list, drafts replies for your approval, and reminds you before deadlines.
+- **Privacy:** only items from your school senders reach the AI.
+- **Free AI budget:** it paces itself to the free daily limit and always leaves room for your own questions.
+
 **Dashboard**
 - Live orb
 - Conversation, activity log, settings and connections

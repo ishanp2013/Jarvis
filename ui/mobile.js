@@ -76,6 +76,7 @@ function onEvent(kind, d) {
     case "approval": showApproval(d); break;
     case "approval_done": { const el = $("#ap-" + d.id); if (el) el.remove(); break; }
     case "warning": toast(d.text); break;
+    case "notification": toast(d.text); if (!$("#tab-tasks").classList.contains("hidden")) loadTasks(); break;
   }
 }
 
@@ -156,6 +157,32 @@ async function startRec() {
   } catch { toast("The microphone needs permission, and works only over the https:// address."); }
 }
 function stopRec() { if (rec && rec.state === "recording") rec.stop(); }
+
+// ------------------------------------------------------------ tasks tab
+function renderTasks(list) {
+  const ul = $("#tasks"); ul.innerHTML = "";
+  if (!list.length) { const li = document.createElement("li"); li.textContent = "Nothing on your list."; ul.appendChild(li); return; }
+  list.forEach((t) => {
+    const li = document.createElement("li");
+    li.className = t.due_text.startsWith("overdue") || t.due_text === "today" ? "urgent" : t.due_text === "tomorrow" ? "soon" : "";
+    const d = document.createElement("div");
+    const b = document.createElement("b"); b.textContent = t.title;
+    const s = document.createElement("small"); s.textContent = (t.due ? "due " + t.due_text : "no due date") + " · " + t.kind;
+    d.append(b, s);
+    const done = document.createElement("button"); done.textContent = "Done";
+    done.onclick = async () => { try { renderTasks(await call("complete_task", t.id)); } catch (e) { toast(e.message); } };
+    li.append(d, done); ul.appendChild(li);
+  });
+}
+
+async function loadTasks() {
+  try {
+    renderTasks(await call("tasks"));
+    const s = await call("agent_status");
+    const last = s.last_run ? new Date(s.last_run * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "never";
+    $("#ag-text").textContent = `${s.running ? "Checking now… " : ""}Last check ${last}. ${s.summary} AI used today: ${s.usage.total} of about ${s.usage.limit}.`;
+  } catch (e) { if (!(e instanceof Offline)) toast(e.message); }
+}
 
 // ------------------------------------------------------------ laptop tab
 async function loadLaptop() {
@@ -241,7 +268,19 @@ window.addEventListener("load", () => {
     $$("#tabs button").forEach((x) => x.classList.toggle("active", x === b));
     $$(".tab").forEach((t) => t.classList.toggle("hidden", t.id !== "tab-" + b.dataset.tab));
     if (b.dataset.tab === "laptop") loadLaptop();
+    if (b.dataset.tab === "tasks") loadTasks();
   });
+  $("#task-add").onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await call("add_task", $("#task-title").value, $("#task-due").value);
+      if (!r.ok) { toast(r.error); return; }
+      $("#task-title").value = ""; $("#task-due").value = ""; renderTasks(r.tasks);
+    } catch (err) { toast(err.message); }
+  };
+  $("#agent-run").onclick = async () => {
+    try { toast(await call("agent_run_now")); setTimeout(loadTasks, 2000); } catch (e) { toast(e.message); }
+  };
   $("#ask").onsubmit = (e) => { e.preventDefault(); send($("#ask-input").value); $("#ask-input").value = ""; };
   const mic = $("#mic");
   mic.addEventListener("pointerdown", (e) => { e.preventDefault(); startRec(); });

@@ -13,6 +13,8 @@ import psutil
 import webview
 
 from . import autostart, config, power, providers, speech
+from . import brain as brain_module
+from .agent.core import Agent
 from .brain import Brain
 from .config import secret_status, settings
 from .listener import Listener
@@ -51,6 +53,9 @@ class Jarvis:
                                       lambda v: self.emit("voice_level", {"rms": round(v, 3)}))
         self.brain = Brain(self.store, self.emit, self.speak, lambda: self.listener)
         self.brain.set_game_mode = lambda on: self.set_game_mode(on)
+        self.agent = Agent(self.store, self.notify, self._reply_card, self._agent_paused)
+        self.brain.agent = self.agent
+        brain_module._AGENT[0] = self.agent  # for the AI's task tools
         self.ready = {"wake": False, "stt": False}
         self.game_mode, self._game_auto, self._game_off_checks, self._mic_before_game = False, False, 0, False
         self.overlay = None        # pywebview window (desktop mode) or subprocess (browser mode)
@@ -73,6 +78,32 @@ class Jarvis:
                     w.evaluate_js(js)
                 except Exception:
                     pass
+
+    # ---------- the agent's voice: dashboard, phone, and a spoken line if you're here
+    def notify(self, text, important=False):
+        self.emit("notification", {"text": text, "important": important, "ts": time.time()})
+        self.store.log("notify", text)
+        if not important:
+            return
+        if not self.game_mode and _user_present() and not _quiet_hours() and self.state == "idle":
+            self.emit("state", {"state": "speaking"})
+            self.speaker.say(self.brain._address(text))
+        try:  # also on the phone, through KDE Connect, when it's reachable
+            if phone.cli() and any(d["reachable"] for d in phone.devices()):
+                phone.ping("Jarvis: " + text)
+        except Exception:
+            pass
+
+    def _reply_card(self, item, text):
+        self.brain._request_approval("email_reply", {"id": item["ext_id"], "body": text})
+
+    def _agent_paused(self):
+        if self.game_mode:
+            return "game mode is on"
+        b = power.battery()
+        if b and not b["plugged"] and b["percent"] < 20:
+            return "battery below 20%"
+        return None
 
     # ---------- game mode: stop listening for the wake word while a game runs
     def set_game_mode(self, on, auto=False, game=""):
@@ -160,6 +191,7 @@ class Jarvis:
             self.show_overlay(True)
         self.awake = power.KeepAwake(lambda on: self.store.log(
             "power", "Keeping the laptop awake while plugged in" if on else "Normal sleep allowed (on battery or setting off)"))
+        self.agent.start()
         threading.Thread(target=self._monitor, daemon=True).start()
 
     def _monitor(self):
@@ -265,6 +297,7 @@ class Api:
             "overlay": {"on": bool(self._j.overlay)},
             "wake": {"model": settings.get("wake_model"), "phrase": speech.wake_phrase()},
             "phone": self._phone_info(),
+            "classroom": {"connected": google.connected("school")},
             "autostart": {"on": autostart.enabled()},
             "remote": {"host": settings.get("remote_host") or "", "devices": len(self._j.store.devices())},
             "power": {"keep_awake": bool(self._j.awake and self._j.awake.active), "battery": power.battery()},
@@ -297,6 +330,53 @@ class Api:
             return phone.open_app(what) or f"I don't have a link for {what}."
         except RuntimeError as e:
             return str(e)
+
+    # ---------- tasks and the background agent
+    def tasks(self):
+        return self._j.agent.task_list()
+
+    def add_task(self, title, due_text=""):
+        from .agent import dates
+        title = (title or "").strip()
+        if not title:
+            return {"ok": False, "error": "Give the task a name."}
+        tid = self._j.store.add_task(title, due=dates.parse(due_text) if due_text else None, source="you")
+        self._j.store.log("task", f"Added task: {title}")
+        return {"ok": True, "id": tid, "tasks": self.tasks()}
+
+    def complete_task(self, task_id):
+        self._j.store.update_task(task_id, status="done")
+        self._j.store.log("task", f"Done: task #{task_id}")
+        return self.tasks()
+
+    def dismiss_task(self, task_id):
+        self._j.store.update_task(task_id, status="dismissed")
+        self._j.store.log("task", f"Dismissed: task #{task_id}")
+        return self.tasks()
+
+    def agent_status(self):
+        return self._j.agent.status()
+
+    def agent_run_now(self):
+        if self._j.agent.running:
+            return "Already checking."
+        threading.Thread(target=self._j.agent.run, args=("manual",), daemon=True).start()
+        return "Checking your school sources now."
+
+    def classroom_connect(self):
+        from .tools import classroom
+        try:
+            who = classroom.connect()
+            self._j.store.log("integration", "Google Classroom connected (school account)")
+            return {"ok": True, "account": who, "classes": len(classroom.courses())}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def classroom_disconnect(self):
+        from .tools import classroom
+        classroom.disconnect()
+        self._j.store.log("integration", "Google Classroom disconnected")
+        return self.integrations()
 
     # ---------- token connections (Notion, Slack, Telegram, Home Assistant)
     def connect_service(self, name, token=None, url=None):
@@ -629,6 +709,27 @@ class Api:
     def open_link(self, url):
         if str(url).startswith(("http://", "https://")):
             win.open_url(url)
+
+
+def _user_present(seconds=120):
+    """True if someone used the keyboard or mouse in the last two minutes."""
+    import ctypes
+
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+    li = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(li)):
+        return False
+    return (ctypes.windll.kernel32.GetTickCount() - li.dwTime) / 1000 < seconds
+
+
+def _quiet_hours(now=None):
+    try:
+        start, end = (int(x) for x in str(settings.get("quiet_hours") or "22-7").split("-"))
+    except ValueError:
+        return False
+    h = (now or time.localtime()).tm_hour
+    return (start <= h or h < end) if start > end else (start <= h < end)
 
 
 def _overlay_corner():

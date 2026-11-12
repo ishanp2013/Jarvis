@@ -26,6 +26,7 @@ window.onJarvis = (kind, d) => {
     case "approval_done": doneApproval(d); break;
     case "activity": $("#st-activity").textContent = d.text; addActivity({ ts: Date.now() / 1000, kind: "activity", text: d.text }); break;
     case "warning": toast(d.text); break;
+    case "notification": toast(d.text); if (!$("#tab-tasks").classList.contains("hidden")) loadAgent(); break;
     case "paired": toast(`Paired ${d.name}.`); $("#pair-box").classList.add("hidden"); renderDevices(); break;
     case "game_mode": setGame(d.on);
       if (d.auto) toast(d.on ? `Game mode on${d.game ? " (" + d.game + ")" : ""}: listening paused.` : "Game mode off: listening again.");
@@ -211,6 +212,7 @@ async function refreshIntegrations(integ) {
     ["Classic Outlook", integ.outlook_classic.connected ? ["ok", "enabled"] : integ.outlook_classic.available ? ["muted", "off"] : ["muted", "not installed"]],
     ["Discord bot", integ.discord.connected ? ["ok", `${integ.discord.channels.length} channels`] : ["muted", "not connected"]],
     ["Gmail / Google", integ.google.connected ? ["ok", "connected"] : integ.google.configured ? ["warn", "not signed in"] : ["muted", "not set up"]],
+    ["Google Classroom", integ.classroom.connected ? ["ok", "connected"] : ["muted", "not connected"]],
     ["GitHub", integ.github.connected ? ["ok", "connected"] : ["muted", "not connected"]],
     ["Notion", integ.notion.connected ? ["ok", "connected"] : ["muted", "not connected"]],
     ["Slack", integ.slack.connected ? ["ok", "connected"] : ["muted", "not connected"]],
@@ -240,6 +242,7 @@ async function refreshIntegrations(integ) {
   $("#discord-status").textContent = integ.discord.connected ? "Connected" : "Not connected";
   $("#google-status").textContent = integ.google.connected ? "Signed in" : integ.google.configured ? "Not signed in" : "Add your OAuth client ID and secret first";
   $("#github-status").textContent = integ.github.connected ? "Connected" : "Not connected";
+  $("#classroom-status").textContent = integ.classroom.connected ? "Connected" : "Not connected";
   renderDiscordChannels(null, integ.discord.channels);
   $$("[data-service]").forEach((card) => {
     card.querySelector("[data-status]").textContent = integ[card.dataset.service].connected ? "Connected" : "Not connected";
@@ -291,6 +294,45 @@ function renderMemories(list) {
   });
 }
 
+function renderTasks(list) {
+  const ul = $("#tasks"); ul.innerHTML = "";
+  if (!list.length) { ul.innerHTML = "<li class='muted'>Nothing on your list. New assignments from school appear here by themselves.</li>"; return; }
+  list.forEach((t) => {
+    const li = document.createElement("li");
+    li.className = t.due_text.startsWith("overdue") || t.due_text === "today" ? "urgent" : t.due_text === "tomorrow" ? "soon" : "";
+    const main = document.createElement("div");
+    const title = document.createElement("b"); title.textContent = t.title;
+    const meta = document.createElement("small");
+    meta.textContent = `${t.due ? "due " + t.due_text : "no due date"} · ${t.kind}${t.source !== "you" ? " · from " + t.source : ""}`;
+    main.append(title, meta);
+    if (t.details) { main.title = t.details; }
+    const done = document.createElement("button"); done.className = "small"; done.textContent = "Done";
+    done.onclick = async () => renderTasks(await api.complete_task(t.id));
+    const drop = document.createElement("button"); drop.className = "small ghost"; drop.textContent = "Dismiss";
+    drop.onclick = async () => renderTasks(await api.dismiss_task(t.id));
+    const btns = document.createElement("span"); btns.append(done, drop);
+    li.append(main, btns); ul.appendChild(li);
+  });
+}
+
+function when(ts) {
+  if (!ts) return "never";
+  const d = new Date(ts * 1000), mins = Math.round((d - Date.now()) / 60000);
+  if (Math.abs(mins) < 1) return "now";
+  if (Math.abs(mins) < 90) return mins < 0 ? `${-mins} min ago` : `in ${mins} min`;
+  return d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+async function loadAgent() {
+  renderTasks(await api.tasks());
+  const s = await api.agent_status();
+  $("#ag-last").textContent = s.running ? "checking now…" : when(s.last_run);
+  $("#ag-next").textContent = s.enabled ? when(s.next_run) : "off";
+  $("#ag-usage").textContent = `${s.usage.total} of about ${s.usage.limit} (agent ${s.usage.agent} of ${s.usage.agent_budget})${s.usage.exhausted ? ", daily limit reached" : ""}`;
+  $("#ag-summary").textContent = s.summary;
+  $("#ag-problems").textContent = (s.problems || []).join(" ");
+}
+
 async function renderDevices() {
   const list = await api.devices(), ul = $("#devices"); ul.innerHTML = "";
   list.forEach((d) => {
@@ -327,6 +369,7 @@ function wire() {
     $$(".tabs button").forEach((x) => x.classList.toggle("active", x.dataset.tab === tab));
     $$(".tab").forEach((t) => t.classList.toggle("hidden", t.id !== "tab-" + tab));
     if (tab === "activity") loadActivity();
+    if (tab === "tasks") loadAgent();
     if (tab === "settings") { api.routines().then(renderRoutines); renderRemote(); }
   }));
   $("#btn-mic").onclick = async () => setMic(await api.set_mic(!micOn));
@@ -406,6 +449,20 @@ function wire() {
     };
     card.querySelector("[data-disconnect]").onclick = async () => refreshIntegrations(await api.disconnect_service(name));
   });
+  $("#agent-run").onclick = async () => {
+    toast(await api.agent_run_now());
+    $("#ag-last").textContent = "checking now…";
+    const poll = setInterval(async () => { const s = await api.agent_status(); if (!s.running) { clearInterval(poll); loadAgent(); } }, 3000);
+  };
+  $("#task-add").onsubmit = async (e) => {
+    e.preventDefault();
+    const r = await api.add_task($("#task-title").value, $("#task-due").value);
+    if (!r.ok) { toast(r.error); return; }
+    $("#task-title").value = ""; $("#task-due").value = ""; renderTasks(r.tasks);
+  };
+  $("#classroom-connect").onclick = () => connectFlow("#classroom-status", "Complete sign-in in your browser with your school account…",
+    () => api.classroom_connect(), (r) => `Signed in as ${r.account}: ${r.classes} classes found`);
+  $("#classroom-disconnect").onclick = async () => refreshIntegrations(await api.classroom_disconnect());
   $("#phone-ring").onclick = async () => { $("#phone-out").textContent = await api.phone_ring(); };
   $("#phone-notes").onclick = async () => { $("#phone-out").textContent = "Checking…"; $("#phone-out").textContent = await api.phone_notifications(); };
   $("#phone-yt").onclick = async () => { $("#phone-out").textContent = await api.phone_open("youtube"); };

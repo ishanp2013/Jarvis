@@ -29,7 +29,8 @@ COOKIE = "jarvis_device"
 
 # What a paired phone may do: talk to Jarvis, answer approval cards, use the laptop controls, read status.
 PHONE_METHODS = {"init", "send_text", "voice", "stop", "approve", "reject", "integrations", "activity", "ping",
-                 "laptop_status", "screenshot", "running_apps", "lock_laptop", "power", "cancel_power", "game_mode"}
+                 "laptop_status", "screenshot", "running_apps", "lock_laptop", "power", "cancel_power", "game_mode",
+                 "tasks", "add_task", "complete_task", "dismiss_task", "agent_status", "agent_run_now"}
 # The phone app's own files, served before pairing so it can show the pairing screen (and work offline).
 APP_SHELL = {"mobile.html", "mobile.js", "mobile.css", "manifest.json", "sw.js", "icon.svg", "orb.js"}
 INJECT = ("index.html", "overlay.html", "mobile.html")

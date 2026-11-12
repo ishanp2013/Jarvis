@@ -42,6 +42,23 @@
     </form>
   </section>
 
+  <section id="tab-tasks" class="tab hidden">
+    <div class="card">
+      <h2>Tasks</h2>
+      <ul id="tasks" class="tasks"></ul>
+      <form id="task-add" class="add" autocomplete="off">
+        <input id="task-title" placeholder="Add a task" maxlength="200">
+        <input id="task-due" placeholder="due" maxlength="40">
+        <button>Add</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Background agent</h2>
+      <p id="ag-text" class="muted-text"></p>
+      <div class="buttons"><button id="agent-run">Check school now</button></div>
+    </div>
+  </section>
+
   <section id="tab-laptop" class="tab hidden">
     <div class="card" id="laptop-card">
       <h2 id="lp-name">Laptop</h2>
@@ -83,6 +100,7 @@
 
 <nav id="tabs" class="hidden">
   <button data-tab="chat" class="active">Chat</button>
+  <button data-tab="tasks">Tasks</button>
   <button data-tab="laptop">Laptop</button>
 </nav>
 <div id="toast" class="hidden"></div>
