@@ -279,6 +279,24 @@ The phone keeps its own key, which Settings lists, and you can remove a phone th
 - **If the laptop is asleep or off**, the phone app still opens and says *Laptop offline (last seen …)*. Commands can't run until it's back, and Jarvis never pretends they did.
 - **Discord class group:** reading needs the Jarvis bot in that server, which a server admin has to add. Otherwise Jarvis opens Discord and tells you why it can't read it.
 
+### Controlling the phone from the laptop (KDE Connect)
+
+Install **KDE Connect** on the laptop (Microsoft Store) and on the phone (Play Store), and pair them in the app. On the phone, open KDE Connect → your laptop → **Plugin settings**, and turn on **Notification sync** (Android asks for notification access), **Ring my phone** and **Share and receive**. It works at home and, through Tailscale, away from home.
+
+**What you can say:**
+- "Find my phone": it rings loudly, even on silent.
+- "Open WhatsApp / YouTube / Discord / Classroom on my phone", or "open youtube and search for lo-fi beats on my phone".
+- "Check my latest notifications", "who messaged me recently" (app and sender or title only).
+- "Call Sam on WhatsApp": opens Sam's chat on the phone (Sam must be a saved contact in Connections → WhatsApp). **You tap Call.**
+- "Call Alex on Discord": opens Discord. **You open the chat and tap Call.**
+- "Send Sam a WhatsApp saying I'm on my way": sent through WhatsApp Desktop on the laptop (same account).
+
+**Not possible, by design:**
+- **"Unlock my phone":** Android only unlocks with your PIN, fingerprint or face on the phone itself, and Jarvis never tries to get around that.
+- **Placing calls or pressing Send inside phone apps:** Android doesn't let other apps do that.
+- **Reading full chat history:** notifications are the only official window into messages, so Jarvis sees what's on the phone's notification shade.
+- **Phone battery level:** KDE Connect doesn't offer it to other programs on Windows.
+
 ## 8. Safety rules built in
 
 - **Closing apps** and **sending** email, Discord, Slack, Telegram, WhatsApp messages or GitHub issues happen straight away when you ask, as you chose. Turn either back on under Settings → Confirmations.

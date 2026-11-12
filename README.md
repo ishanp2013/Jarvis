@@ -56,6 +56,7 @@ It is built to stay light on a mid-range laptop (it was developed on a Ryzen 5 3
 - **Background service:** runs at sign-in with no window, and keeps the laptop awake while plugged in.
 - **Android phone app:** installable, and reaches the laptop privately through Tailscale (pair once with a 6-digit code). From it you can chat, talk, open apps, see a screenshot, list running apps, lock, restart or shut down (with confirmation), and use game mode.
 - **Offline:** if the laptop is asleep, the phone app says so instead of pretending.
+- **Phone from the laptop** (KDE Connect): find my phone, open apps and links on the phone, read its notifications ("who messaged me?"), open a WhatsApp chat to call someone. Unlocking the phone is never attempted.
 
 **Dashboard**
 - Live orb

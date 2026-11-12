@@ -814,5 +814,66 @@ class BackgroundTests(unittest.TestCase):
             self.assertTrue(power.plugged_in())  # a desktop PC
 
 
+class PhoneControlTests(RouterBase):
+    """Phone commands go to KDE Connect (mocked here); nothing tries to get around Android's security."""
+
+    def setUp(self):
+        super().setUp()
+        from jarvis.tools import phone
+        self.phone, self.sent = phone, []
+
+        def fake_run(*args, timeout=20):
+            self.sent.append(args)
+            if args == ("-l",):
+                return 0, "- POCO F1: abc123 on 192.168.0.5 via LAN (paired and reachable)\n- Old phone: def456 (paired)", ""
+            if "--list-notifications" in args:
+                return 0, "- WhatsApp: Sam\n- WhatsApp: Class 10B group\n- Gmail: Science homework\n- YouTube: New video", ""
+            return 0, "", ""
+        p = mock.patch.object(phone, "_run", fake_run)
+        p.start()
+        self.addCleanup(p.stop)
+        phone._cache.update(at=0, devices=[])
+
+    def test_devices_parsed(self):
+        self.assertEqual(self.phone.devices(refresh=True), [{"id": "abc123", "name": "POCO F1", "reachable": True},
+                                                            {"id": "def456", "name": "Old phone", "reachable": False}])
+
+    def test_unlock_is_refused(self):
+        self.assertIn("can't unlock", self.ask("unlock my phone"))
+        self.assertFalse(any("--unlock" in a for a in self.sent))
+
+    def test_find_and_open(self):
+        self.assertIn("Ringing your POCO F1", self.ask("find my phone"))
+        self.assertIn(("-d", "abc123", "--ring"), self.sent)
+        self.assertIn("Opening WhatsApp on your POCO F1", self.ask("open whatsapp on my phone"))
+        self.ask("open youtube on my phone")
+        self.assertEqual(self.sent[-1], ("-d", "abc123", "--share", "https://www.youtube.com"))
+        self.assertNotIn("youtube", [c[0] for c in self.calls])  # the laptop didn't open YouTube
+        self.ask("open youtube and search for lofi beats on my phone")
+        self.assertEqual(self.sent[-1][-1], "https://www.youtube.com/results?search_query=lofi+beats")
+
+    def test_calls_open_the_chat(self):
+        with mock.patch.dict(settings._data, {"whatsapp_contacts": {"Sam": "971500000000"}}):
+            reply = self.ask("call sam on whatsapp")
+        self.assertIn("Tap the call button", reply)
+        self.assertEqual(self.sent[-1][-1], "https://wa.me/971500000000")
+        self.assertIn("isn't in your saved WhatsApp contacts", self.ask("call alex on whatsapp"))
+        self.assertIn("Discord doesn't let other apps start calls", self.ask("call alex on discord"))
+
+    def test_notifications(self):
+        self.assertIn("4 notifications", self.ask("check my latest notifications"))
+        reply = self.ask("who messaged me recently")
+        self.assertIn("WhatsApp: Sam, Class 10B group", reply)
+        self.assertIn("Gmail: Science homework", reply)
+        self.assertNotIn("New video", reply)  # only messaging apps
+
+    def test_unreachable_phone_is_reported(self):
+        def offline(*args, timeout=20):
+            return (0, "- POCO F1: abc123 (paired)", "") if args == ("-l",) else (0, "", "")
+        with mock.patch.object(self.phone, "_run", offline):
+            self.phone._cache.update(at=0, devices=[])
+            self.assertIn("can't reach your POCO F1", self.ask("find my phone"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -20,7 +20,7 @@ import httpx
 from . import providers
 from .config import get_secret, settings
 from .tools import (discord, files, games, github, google, home, layout, microsoft, notion, outlook_classic, routines,
-                    screen, slack, smalltalk, spotify, telegram, uia, weather, web, whatsapp, youtube)
+                    phone, screen, slack, smalltalk, spotify, telegram, uia, weather, web, whatsapp, youtube)
 from .tools import windows as win
 
 log = logging.getLogger("brain")
@@ -369,6 +369,25 @@ def t_home_control(device, action, value=None):
     return home.control(device, action, value)
 
 
+@tool("phone_find", "Ring the user's phone loudly so they can find it")
+def t_phone_ring():
+    return phone.ring()
+
+
+@tool("phone_open", "Open an app (by name, e.g. YouTube, WhatsApp, Discord) or a web link on the user's Android phone",
+      {"what": ("string", "app name or URL")}, ["what"])
+def t_phone_open(what):
+    if reply := phone.open_app(what):
+        return reply
+    dev = phone.open_url(what)
+    return f"Opened {what} on {dev['name']}."
+
+
+@tool("phone_notifications", "The notifications currently showing on the user's phone (app and title), e.g. who messaged them")
+def t_phone_notes():
+    return phone.notifications()
+
+
 @tool("power_laptop", "Restart or shut down the laptop after a 30-second countdown (the user confirms first)",
       {"action": ("string", "restart|shutdown")}, ["action"], approval="voice")
 def t_power(action):
@@ -382,7 +401,7 @@ def t_game_mode(on):
 
 
 PERSONAL_TOOLS = {n for n in TOOLS if n.startswith(("email_", "calendar_", "task", "discord_", "gmail_", "gcal_", "gtask",
-                                                    "github_", "notion_", "drive_", "slack_", "telegram_"))}
+                                                    "github_", "notion_", "drive_", "slack_", "telegram_", "phone_notif"))}
 # Sends that skip the card when confirmations are off and the user's own words asked to send something.
 SEND_TOOLS = {"email_compose", "email_reply", "discord_post", "whatsapp_send", "github_create_issue", "slack_post",
               "telegram_send"}
@@ -647,6 +666,9 @@ class Brain:
             if t.startswith("open discord"):
                 win.open_app("discord")
             return self._discord_group(r.group(1))
+        # the phone (through KDE Connect)
+        if (reply := self._phone_command(t)) is not None:
+            return reply
         # routines: "when I say focus mode, close discord and open notepad"
         if name := routines.match(t):
             return self._run_routine(name)
@@ -809,6 +831,47 @@ class Brain:
             return None
         return self._offline_fallback(t)
 
+    def _phone_command(self, t):
+        """Phone requests: find it, open apps and links on it, read its notifications, start WhatsApp/Discord calls."""
+        m = lambda p: re.match(p, t)
+        ph = r"(?:my |the )?phone"
+        if m(rf"^unlock {ph}$"):
+            return phone.UNLOCK_REFUSAL
+        if m(rf"^(?:find|ring|locate|where(?:'s| is)|i can'?t find) {ph}\??$"):
+            return phone.ring()
+        if r := m(rf"^(?:open|launch|start|go to) (.+?) on {ph}$"):
+            target = r.group(1)
+            if s := re.match(r"youtube and (?:search|look up)(?: for)? (.+)", target):
+                return phone.youtube_search(s.group(1))
+            if reply := phone.open_app(target):
+                return reply
+            if re.search(r"\.(com|org|net|io|dev|ai|co|uk|gg|tv|edu|gov|in|ae)\b", target):
+                dev = phone.open_url(target.replace(" ", ""))
+                return f"Opening {target} on your {dev['name']}."
+            return (f"I open apps on your phone through their links, and I don't have one for {target}. "
+                    f"I can open {', '.join(sorted(phone.APPS)[:8])} and more, or any website.")
+        if r := m(rf"^(?:search youtube for|play|look up) (.+?) on {ph}$") or m(rf"^(?:on {ph},? )(?:search youtube for|play) (.+)$"):
+            return phone.youtube_search(r.group(1))
+        if r := m(r"^(?:call|ring|phone|video call|voice call) (.+?) on whats ?app$"):
+            found, number = whatsapp.find_contact(r.group(1))
+            if not number:
+                return (f"{r.group(1).title()} isn't in your saved WhatsApp contacts. Add them under Connections, WhatsApp, "
+                        "and I can open their chat on your phone.")
+            dev = phone.whatsapp_chat(number)
+            return (f"I've opened your chat with {found} on your {dev['name']}. Tap the call button there. "
+                    "Android doesn't let other apps place WhatsApp calls for you.")
+        if r := m(r"^(?:call|ring|video call|voice call) (.+?) on discord$"):
+            reply = phone.open_app("discord")
+            return (f"{reply} Discord doesn't let other apps start calls, so open your chat with {r.group(1)} "
+                    "and tap the call button.")
+        if m(rf"^(?:check|read|show(?: me)?|what are|any)(?: my)?(?: latest| recent| new| phone)? notifications(?: on {ph})?$") \
+                or m(rf"^what(?:'s| is) on {ph}$"):
+            return phone.summary()
+        if m(rf"^who(?:'s| has)? (?:messaged|texted|messages|called|been messaging) me(?: recently| today| lately)?(?: on {ph})?$") \
+                or m(rf"^(?:any|do i have any) (?:new |unread )?(?:messages|texts)(?: on {ph})?$"):
+            return phone.summary(only_messages=True)
+        return None
+
     def _discord_group(self, name):
         """Latest messages in the selected Discord channel that best matches 'class', 'maths group' and so on."""
         if not discord.connected():
@@ -875,8 +938,8 @@ class Brain:
         if settings.get("honorific"):
             user += f" Address the user respectfully as \"{settings['honorific']}\"."
         if self._private_cloud():
-            user += (" Private mode is on, so the user's email, calendar, tasks, Discord, GitHub, Notion, Google Drive, Slack and "
-                     "Telegram are hidden from you. If they ask about those, say private mode keeps them away from online AI, "
+            user += (" Private mode is on, so the user's email, calendar, tasks, Discord, GitHub, Notion, Google Drive, Slack, "
+                     "Telegram and phone notifications are hidden from you. If they ask about those, say private mode keeps them away from online AI, "
                      "and that they can turn it off in Settings, or use a simple command like 'check my email'.")
         return PERSONA.format(name=settings["assistant_name"], now=dt.datetime.now().strftime("%A %d %B %Y, %H:%M"),
                               user=user, memories=mems)

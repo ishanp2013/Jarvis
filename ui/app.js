@@ -218,6 +218,8 @@ async function refreshIntegrations(integ) {
     ["Smart home", integ.home.connected ? ["ok", "connected"] : ["muted", "not connected"]],
     ["Games", integ.games.count ? ["ok", `${integ.games.count} installed`] : ["muted", "none found"]],
     ["YouTube Music", ["ok", "browser"]],
+    ["Phone", !integ.phone.installed ? ["muted", "no KDE Connect"] : !integ.phone.devices.length ? ["warn", "not paired"]
+      : integ.phone.devices.some((d) => d.reachable) ? ["ok", integ.phone.devices[0].name] : ["warn", "not reachable"]],
     ["WhatsApp", integ.whatsapp.connected ? ["ok", S.confirm_sends ? "drafts" : "sends"] : ["muted", "off"]],
     ["Spotify", ["ok", "desktop app"]],
     ["Weather", ["ok", "Open-Meteo"]],
@@ -246,6 +248,10 @@ async function refreshIntegrations(integ) {
   $("#games-status").textContent = integ.games.count ? `${integ.games.count} games found in Steam and Epic.` : "No Steam or Epic games found.";
   $("#overlay-toggle").checked = integ.overlay.on;
   $("#autostart-toggle").checked = integ.autostart.on;
+  const ph = integ.phone;
+  $("#phone-status").textContent = !ph.installed ? "KDE Connect isn't installed on this laptop."
+    : !ph.devices.length ? "No phone paired in KDE Connect yet."
+    : ph.devices.map((d) => `${d.name}: ${d.reachable ? "connected" : "not reachable"}`).join(", ");
   setGame(integ.game_mode.on);
   wakePhrase = integ.wake.phrase; $("#st-wake").textContent = `"${wakePhrase}"`;
   const builtIn = ["hey_jarvis", "alexa", "hey_mycroft", "hey_rhasspy"].includes(integ.wake.model);
@@ -400,6 +406,9 @@ function wire() {
     };
     card.querySelector("[data-disconnect]").onclick = async () => refreshIntegrations(await api.disconnect_service(name));
   });
+  $("#phone-ring").onclick = async () => { $("#phone-out").textContent = await api.phone_ring(); };
+  $("#phone-notes").onclick = async () => { $("#phone-out").textContent = "Checking…"; $("#phone-out").textContent = await api.phone_notifications(); };
+  $("#phone-yt").onclick = async () => { $("#phone-out").textContent = await api.phone_open("youtube"); };
   $("#autostart-toggle").onchange = async (e) => { e.target.checked = await api.set_autostart(e.target.checked); };
   $("#pair-start").onclick = async () => {
     const r = await api.pair_start();

@@ -17,7 +17,7 @@ from .brain import Brain
 from .config import secret_status, settings
 from .listener import Listener
 from .storage import Store, setup_logging
-from .tools import (discord, gamemode, games, github, google, home, microsoft, notion, outlook_classic, routines, slack,
+from .tools import (discord, gamemode, games, github, google, home, microsoft, notion, outlook_classic, phone, routines, slack,
                     telegram, whatsapp)
 from .tools import windows as win
 
@@ -264,10 +264,39 @@ class Api:
             "game_mode": {"on": self._j.game_mode},
             "overlay": {"on": bool(self._j.overlay)},
             "wake": {"model": settings.get("wake_model"), "phrase": speech.wake_phrase()},
+            "phone": self._phone_info(),
             "autostart": {"on": autostart.enabled()},
             "remote": {"host": settings.get("remote_host") or "", "devices": len(self._j.store.devices())},
             "power": {"keep_awake": bool(self._j.awake and self._j.awake.active), "battery": power.battery()},
         }
+
+    @staticmethod
+    def _phone_info():
+        if not phone.cli():
+            return {"installed": False, "devices": []}
+        try:
+            return {"installed": True, "devices": phone.devices()}
+        except Exception as e:
+            return {"installed": True, "devices": [], "error": str(e)[:150]}
+
+    # ---------- the phone, from the laptop dashboard (KDE Connect)
+    def phone_ring(self):
+        try:
+            return phone.ring()
+        except RuntimeError as e:
+            return str(e)
+
+    def phone_notifications(self):
+        try:
+            return phone.summary()
+        except RuntimeError as e:
+            return str(e)
+
+    def phone_open(self, what):
+        try:
+            return phone.open_app(what) or f"I don't have a link for {what}."
+        except RuntimeError as e:
+            return str(e)
 
     # ---------- token connections (Notion, Slack, Telegram, Home Assistant)
     def connect_service(self, name, token=None, url=None):
