@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jarvis</title>
+<link rel="stylesheet" href="/ui/app.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot"></span>J.A.R.V.I.S</div>
+  <div class="chips">
+    <span class="chip" id="chip-mic">Mic</span>
+    <span class="chip" id="chip-wake">Wake word</span>
+    <span class="chip" id="chip-ai">AI</span>
+    <span class="chip" id="chip-net">Online</span>
+  </div>
+  <div class="clock" id="clock"></div>
+</header>
+
+<main>
+  <!-- left column -->
+  <section class="col">
+    <div class="panel">
+      <h2>Status</h2>
+      <div class="kv"><span>Assistant</span><b id="st-state">starting</b></div>
+      <div class="kv"><span>Microphone</span><b id="st-mic">-</b></div>
+      <div class="kv"><span>Wake phrase</span><b id="st-wake">"Hey Jarvis"</b></div>
+      <div class="kv"><span>Speech model</span><b id="st-stt">loading</b></div>
+      <div class="kv"><span>Voice</span><b id="st-voice">-</b></div>
+      <div class="kv"><span>Doing</span><b id="st-activity">-</b></div>
+    </div>
+    <div class="panel">
+      <h2>System</h2>
+      <div class="meter"><span>CPU</span><div class="bar"><i id="m-cpu"></i></div><b id="v-cpu">-</b></div>
+      <div class="meter"><span>RAM</span><div class="bar"><i id="m-ram"></i></div><b id="v-ram">-</b></div>
+      <div class="kv"><span>Jarvis uses</span><b id="v-me">-</b></div>
+    </div>
+    <div class="panel grow">
+      <h2>Integrations</h2>
+      <ul class="integrations" id="integrations"></ul>
+      <button class="ghost small" data-tab="connect">Manage connections</button>
+    </div>
+  </section>
+
+  <!-- centre -->
+  <section class="centre">
+    <canvas id="orb" width="520" height="520" aria-hidden="true"></canvas>
+    <div class="state-label" id="state-label">Starting up…</div>
+    <div class="hint" id="hint">Say "Hey Jarvis", or press Talk.</div>
+    <div class="controls">
+      <button id="btn-mic" class="round" title="Microphone on/off">Mic</button>
+      <button id="btn-talk" class="round primary" title="Talk (Ctrl+Space)">Talk</button>
+      <button id="btn-stop" class="round danger" title="Stop (Esc)">Stop</button>
+    </div>
+    <form id="ask" autocomplete="off">
+      <input id="ask-input" placeholder="Type a request…  (Esc stops Jarvis)" maxlength="2000">
+      <button>Send</button>
+    </form>
+    <div id="approvals"></div>
+    <div id="toasts"></div>
+  </section>
+
+  <!-- right column -->
+  <section class="col wide">
+    <nav class="tabs">
+      <button data-tab="chat" class="active">Conversation</button>
+      <button data-tab="activity">Activity</button>
+      <button data-tab="settings">Settings</button>
+      <button data-tab="connect">Connections</button>
+    </nav>
+
+    <div class="panel tab grow" id="tab-chat">
+      <div id="chat"></div>
+    </div>
+
+    <div class="panel tab grow hidden" id="tab-activity">
+      <div class="row"><h2>Activity log</h2><button class="ghost small" id="refresh-activity">Refresh</button></div>
+      <ul id="activity"></ul>
+    </div>
+
+    <div class="panel tab grow hidden scroll" id="tab-settings">
+      <h3>You</h3>
+      <label>Your name <input data-set="user_name" placeholder="optional"></label>
+
+      <h3>Listening</h3>
+      <label class="check"><input type="checkbox" data-set="wake_word_enabled"> Listen for "Hey Jarvis"</label>
+      <label>Wake sensitivity <input type="range" min="0.3" max="0.9" step="0.05" data-set="wake_threshold"><small>lower = triggers more easily</small></label>
+      <label>Follow-up listening (seconds after a reply, 0 = off) <input type="number" min="0" max="20" data-set="follow_up_seconds"></label>
+      <label>Speech recognition model
+        <select data-set="stt_model"><option value="tiny.en">tiny.en: fastest</option><option value="base.en">base.en: balanced (recommended)</option><option value="small.en">small.en: most accurate, slower</option></select></label>
+
+      <h3>Voice</h3>
+      <label>Voice engine
+        <select data-set="tts_provider"><option value="edge">Microsoft neural (free, online)</option><option value="elevenlabs">ElevenLabs (API key)</option><option value="windows">Windows offline voice</option></select></label>
+      <div class="group" data-show="tts_provider=edge">
+        <label>Voice <select data-set="edge_voice" id="edge-voices"></select></label>
+        <label>Speed <select data-set="edge_rate"><option>-15%</option><option>-10%</option><option>-5%</option><option>+0%</option><option>+10%</option></select></label>
+        <label>Pitch <select data-set="edge_pitch"><option>-15Hz</option><option>-8Hz</option><option>-4Hz</option><option>+0Hz</option></select></label>
+      </div>
+      <div class="group" data-show="tts_provider=elevenlabs">
+        <label>ElevenLabs API key <span class="secret-row"><input type="password" data-secret="elevenlabs_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="elevenlabs_api_key">Save</button></span></label>
+        <button class="small ghost" id="el-load">Load my voices and usage</button>
+        <div id="el-usage" class="muted"></div>
+        <label>Voice <select data-set="elevenlabs_voice_id" id="el-voices"><option value="">(load voices first)</option></select></label>
+        <label>Model <select data-set="elevenlabs_model"><option value="eleven_flash_v2_5">Flash v2.5: fastest, half credits</option><option value="eleven_multilingual_v2">Multilingual v2: richest</option></select></label>
+        <label>Stability <input type="range" min="0" max="1" step="0.05" data-set="elevenlabs_stability"></label>
+        <label>Similarity <input type="range" min="0" max="1" step="0.05" data-set="elevenlabs_similarity"></label>
+        <label>Style <input type="range" min="0" max="1" step="0.05" data-set="elevenlabs_style"></label>
+      </div>
+      <label>Volume <input type="range" min="0.2" max="1.5" step="0.05" data-set="tts_volume"></label>
+      <button class="small" id="test-voice">Test voice</button>
+
+      <h3>AI model</h3>
+      <label>Provider
+        <select data-set="llm_provider"><option value="gemini">Google Gemini (free API key)</option><option value="ollama">Ollama (local, offline)</option><option value="off">Off: basic commands only</option></select></label>
+      <div class="group" data-show="llm_provider=gemini">
+        <label>Gemini API key <span class="secret-row"><input type="password" data-secret="gemini_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="gemini_api_key">Save</button></span></label>
+        <label>Model <input data-set="gemini_model" list="gemini-models"></label>
+        <datalist id="gemini-models"><option value="gemini-2.5-flash-lite"><option value="gemini-3.5-flash-lite"><option value="gemini-3.1-flash-lite"><option value="gemini-3-flash-preview"></datalist>
+      </div>
+      <div class="group" data-show="llm_provider=ollama">
+        <label>Ollama model <input data-set="ollama_model"></label>
+        <label>Ollama URL <input data-set="ollama_url"></label>
+      </div>
+
+      <h3>Browser</h3>
+      <label>Browser path (Opera GX) <input data-set="browser_path"></label>
+
+      <h3>Memory and privacy</h3>
+      <ul id="memories"></ul>
+      <button class="small danger" id="clear-history">Clear conversation history</button>
+    </div>
+
+    <div class="panel tab grow hidden scroll" id="tab-connect">
+      <div class="card">
+        <h3>Microsoft: Outlook.com mail, Calendar and To Do</h3>
+        <p class="muted">Official Microsoft sign-in (Microsoft Graph). You need a free app registration first; see SETUP.md.</p>
+        <label>Application (client) ID <input data-set="ms_client_id" placeholder="00000000-0000-0000-0000-000000000000"></label>
+        <div class="row"><span id="ms-status" class="muted"></span>
+          <span><button class="small" id="ms-connect">Sign in</button> <button class="small danger" id="ms-disconnect">Disconnect</button></span></div>
+      </div>
+      <div class="card">
+        <h3>Classic Outlook (desktop)</h3>
+        <p class="muted">Reads accounts already set up in classic Outlook, including Gmail over IMAP. No cloud setup needed. Classic Outlook must be installed and signed in.</p>
+        <label class="check"><input type="checkbox" id="classic-toggle"> Allow Jarvis to use classic Outlook</label>
+        <div id="classic-status" class="muted"></div>
+      </div>
+      <div class="card">
+        <h3>Discord (bot)</h3>
+        <p class="muted">Uses your own Discord bot, invited only to the servers you choose. It can't read your personal DMs.</p>
+        <label>Bot token <span class="secret-row"><input type="password" id="discord-token" placeholder="paste bot token"><button class="small" id="discord-connect">Connect</button></span></label>
+        <div id="discord-status" class="muted"></div>
+        <div id="discord-channels"></div>
+        <button class="small danger" id="discord-disconnect">Disconnect</button>
+      </div>
+      <div class="card">
+        <h3>WhatsApp</h3>
+        <p class="muted">There is no official way to read personal WhatsApp chats. Jarvis can only draft a message and open WhatsApp with it filled in; you press Send.</p>
+        <label class="check"><input type="checkbox" data-set="whatsapp_enabled"> Allow WhatsApp drafts</label>
+      </div>
+    </div>
+  </section>
+</main>
+<script src="/tests/ui_mock.js"></script><script src="/ui/app.js"></script>
+</body>
+</html>

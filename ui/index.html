@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jarvis</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot"></span>J.A.R.V.I.S</div>
+  <div class="chips">
+    <span class="chip" id="chip-mic">Mic</span>
+    <span class="chip" id="chip-wake">Wake word</span>
+    <span class="chip" id="chip-ai">AI</span>
+    <span class="chip" id="chip-net">Online</span>
+    <button class="chip off" id="chip-game" title="Game mode: stops listening while you play. Click to switch.">Game mode</button>
+  </div>
+  <div class="clock" id="clock"></div>
+</header>
+
+<main>
+  <!-- left column -->
+  <section class="col">
+    <div class="panel">
+      <h2>Status</h2>
+      <div class="kv"><span>Assistant</span><b id="st-state">starting</b></div>
+      <div class="kv"><span>Microphone</span><b id="st-mic">-</b></div>
+      <div class="kv"><span>Wake phrase</span><b id="st-wake">"Hey Jarvis"</b></div>
+      <div class="kv"><span>Speech model</span><b id="st-stt">loading</b></div>
+      <div class="kv"><span>Voice</span><b id="st-voice">-</b></div>
+      <div class="kv"><span>Doing</span><b id="st-activity">-</b></div>
+    </div>
+    <div class="panel">
+      <h2>System</h2>
+      <div class="meter"><span>CPU</span><div class="bar"><i id="m-cpu"></i></div><b id="v-cpu">-</b></div>
+      <div class="meter"><span>RAM</span><div class="bar"><i id="m-ram"></i></div><b id="v-ram">-</b></div>
+      <div class="kv"><span>Jarvis uses</span><b id="v-me">-</b></div>
+    </div>
+    <div class="panel grow">
+      <h2>Integrations</h2>
+      <ul class="integrations" id="integrations"></ul>
+      <button class="ghost small" data-tab="connect">Manage connections</button>
+    </div>
+  </section>
+
+  <!-- centre -->
+  <section class="centre">
+    <canvas id="orb" width="640" height="640" aria-hidden="true"></canvas>
+    <div class="state-label" id="state-label">Starting up…</div>
+    <div class="hint" id="hint">Say "Hey Jarvis", or press Talk.</div>
+    <div class="controls">
+      <button id="btn-mic" class="round" title="Microphone on/off">Mic</button>
+      <button id="btn-talk" class="round primary" title="Talk (Ctrl+Space)">Talk</button>
+      <button id="btn-stop" class="round danger" title="Stop (Esc)">Stop</button>
+    </div>
+    <form id="ask" autocomplete="off">
+      <input id="ask-input" placeholder="Type a request…  (Esc stops Jarvis)" maxlength="2000">
+      <button>Send</button>
+    </form>
+    <div id="approvals"></div>
+    <div id="toasts"></div>
+  </section>
+
+  <!-- right column -->
+  <section class="col wide">
+    <nav class="tabs">
+      <button data-tab="chat" class="active">Conversation</button>
+      <button data-tab="activity">Activity</button>
+      <button data-tab="settings">Settings</button>
+      <button data-tab="connect">Connections</button>
+    </nav>
+
+    <div class="panel tab grow" id="tab-chat">
+      <div id="chat"></div>
+    </div>
+
+    <div class="panel tab grow hidden" id="tab-activity">
+      <div class="row"><h2>Activity log</h2><button class="ghost small" id="refresh-activity">Refresh</button></div>
+      <ul id="activity"></ul>
+    </div>
+
+    <div class="panel tab grow hidden scroll" id="tab-settings">
+      <h3>You</h3>
+      <label>Your name <input data-set="user_name" placeholder="optional"></label>
+      <label>Home city (for weather) <input data-set="weather_place" placeholder="e.g. Dubai"></label>
+      <label>Jarvis calls you <input data-set="honorific" placeholder="e.g. sir (leave empty for nothing)"><small>added to the end of every reply</small></label>
+
+      <h3>Listening</h3>
+      <label class="check"><input type="checkbox" data-set="wake_word_enabled"> Listen for the wake word</label>
+      <label>Wake word
+        <select id="wake-model"><option value="hey_jarvis">Hey Jarvis</option><option value="alexa">Alexa</option><option value="hey_mycroft">Hey Mycroft</option><option value="hey_rhasspy">Hey Rhasspy</option><option value="custom">My own wake word (.onnx file)</option></select></label>
+      <div id="wake-custom" class="group hidden">
+        <label>Model file <input id="wake-path" placeholder="C:\Users\you\Downloads\hey_friday.onnx" spellcheck="false"></label>
+        <label>What it's called <input id="wake-label" placeholder="e.g. Hey Friday"></label>
+        <p class="muted">Train your own phrase for free with openWakeWord's training notebook (see SETUP.md), then pick the .onnx file it makes.</p>
+      </div>
+      <div class="row"><span id="wake-status" class="muted"></span><button class="small" id="wake-apply">Use this wake word</button></div>
+      <label>Wake sensitivity <input type="range" min="0.3" max="0.9" step="0.05" data-set="wake_threshold"><small>lower = triggers more easily</small></label>
+      <label>Follow-up listening (seconds after a reply, 0 = off) <input type="number" min="0" max="20" data-set="follow_up_seconds"></label>
+      <label>Speech recognition model
+        <select data-set="stt_model"><option value="tiny.en">tiny.en: fastest</option><option value="base.en">base.en: balanced (recommended)</option><option value="small.en">small.en: most accurate, slower</option></select></label>
+
+      <h3>Voice</h3>
+      <label>Voice engine
+        <select data-set="tts_provider"><option value="edge">Microsoft neural (free, online)</option><option value="elevenlabs">ElevenLabs (API key)</option><option value="windows">Windows offline voice</option></select></label>
+      <div class="group" data-show="tts_provider=edge">
+        <label>Voice <select data-set="edge_voice" id="edge-voices"></select></label>
+        <label>Speed <select data-set="edge_rate"><option>-15%</option><option>-10%</option><option>-5%</option><option>+0%</option><option>+10%</option></select></label>
+        <label>Pitch <select data-set="edge_pitch"><option>-15Hz</option><option>-8Hz</option><option>-4Hz</option><option>+0Hz</option></select></label>
+      </div>
+      <div class="group" data-show="tts_provider=elevenlabs">
+        <label>ElevenLabs API key <span class="secret-row"><input type="password" data-secret="elevenlabs_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="elevenlabs_api_key">Save</button></span></label>
+        <button class="small ghost" id="el-load">Load my voices and usage</button>
+        <div id="el-usage" class="muted"></div>
+        <label>Voice <select data-set="elevenlabs_voice_id" id="el-voices"><option value="">(load voices first)</option></select></label>
+          <label>Or paste a voice ID <input type="text" data-set="elevenlabs_voice_id" placeholder="from elevenlabs.io/voices/&lt;ID&gt;" spellcheck="false"></label>
+        <label>Model <select data-set="elevenlabs_model"><option value="eleven_flash_v2_5">Flash v2.5: fastest, half credits</option><option value="eleven_multilingual_v2">Multilingual v2: richest</option></select></label>
+        <label>Stability <input type="range" min="0" max="1" step="0.05" data-set="elevenlabs_stability"></label>
+        <label>Similarity <input type="range" min="0" max="1" step="0.05" data-set="elevenlabs_similarity"></label>
+        <label>Style <input type="range" min="0" max="1" step="0.05" data-set="elevenlabs_style"></label>
+      </div>
+      <label>Volume <input type="range" min="0.2" max="1.5" step="0.05" data-set="tts_volume"></label>
+      <button class="small" id="test-voice">Test voice</button>
+
+      <h3>AI model</h3>
+      <label>Provider
+        <select data-set="llm_provider">
+          <option value="gemini">Google Gemini (free tier available)</option>
+          <option value="anthropic">Anthropic Claude (paid API)</option>
+          <option value="openai">OpenAI ChatGPT (paid API)</option>
+          <option value="openrouter">OpenRouter: hundreds of models, some free</option>
+          <option value="groq">Groq (free tier available)</option>
+          <option value="mistral">Mistral (free tier available)</option>
+          <option value="deepseek">DeepSeek (paid API, low cost)</option>
+          <option value="xai">xAI Grok (paid API)</option>
+          <option value="ollama">Ollama (on this PC, offline, free)</option>
+          <option value="custom">Other OpenAI-compatible (LM Studio and others)</option>
+          <option value="off">Off: basic commands only</option>
+        </select></label>
+      <p class="muted">API keys are separate from chat subscriptions: ChatGPT Plus or Claude Pro don't include API use. Each key is stored in Windows Credential Manager.</p>
+      <div class="group" data-show="llm_provider=gemini">
+        <label>Gemini API key <span class="secret-row"><input type="password" data-secret="gemini_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="gemini_api_key">Save</button></span></label>
+        <label>Model <input data-set="gemini_model" list="gemini-models"></label>
+        <datalist id="gemini-models"><option value="gemini-2.5-flash-lite"><option value="gemini-3.5-flash-lite"><option value="gemini-3.1-flash-lite"><option value="gemini-3-flash-preview"></datalist>
+      </div>
+      <div class="group" data-show="llm_provider=anthropic">
+        <label>Anthropic API key <span class="secret-row"><input type="password" data-secret="anthropic_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="anthropic_api_key">Save</button></span></label>
+        <label>Model <input data-set="anthropic_model" list="anthropic-models"></label>
+        <datalist id="anthropic-models"><option value="claude-opus-5-5"><option value="claude-sonnet-5-5"><option value="claude-haiku-5-5"><option value="claude-fable-5-1"></datalist>
+        <label>Thinking effort <select data-set="anthropic_effort"><option value="low">Low: quickest replies</option><option value="medium">Medium</option><option value="high">High: thinks hardest, slower</option></select></label>
+        <p class="muted">Claude Opus 5.5 is the most capable everyday model; Haiku 5.5 is the cheapest. Get a key at console.anthropic.com.</p>
+      </div>
+      <div class="group" data-show="llm_provider=openai">
+        <label>OpenAI API key <span class="secret-row"><input type="password" data-secret="openai_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="openai_api_key">Save</button></span></label>
+        <label>Model <input data-set="openai_model" placeholder="e.g. gpt-5-mini"></label>
+        <p class="muted">Get a key at platform.openai.com. Type any model name your account can use.</p>
+      </div>
+      <div class="group" data-show="llm_provider=openrouter">
+        <label>OpenRouter API key <span class="secret-row"><input type="password" data-secret="openrouter_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="openrouter_api_key">Save</button></span></label>
+        <label>Model <input data-set="openrouter_model" placeholder="e.g. openrouter/auto, or a model ID ending in :free"></label>
+        <p class="muted">openrouter.ai: one key for Claude, GPT, Gemini, Llama and more. Models ending in :free cost nothing.</p>
+      </div>
+      <div class="group" data-show="llm_provider=groq">
+        <label>Groq API key <span class="secret-row"><input type="password" data-secret="groq_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="groq_api_key">Save</button></span></label>
+        <label>Model <input data-set="groq_model"></label>
+        <p class="muted">console.groq.com: very fast, with a free tier.</p>
+      </div>
+      <div class="group" data-show="llm_provider=mistral">
+        <label>Mistral API key <span class="secret-row"><input type="password" data-secret="mistral_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="mistral_api_key">Save</button></span></label>
+        <label>Model <input data-set="mistral_model"></label>
+        <p class="muted">console.mistral.ai, with a free experiment tier.</p>
+      </div>
+      <div class="group" data-show="llm_provider=deepseek">
+        <label>DeepSeek API key <span class="secret-row"><input type="password" data-secret="deepseek_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="deepseek_api_key">Save</button></span></label>
+        <label>Model <input data-set="deepseek_model"></label>
+      </div>
+      <div class="group" data-show="llm_provider=xai">
+        <label>xAI API key <span class="secret-row"><input type="password" data-secret="xai_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="xai_api_key">Save</button></span></label>
+        <label>Model <input data-set="xai_model"></label>
+      </div>
+      <div class="group" data-show="llm_provider=ollama">
+        <label>Ollama model <input data-set="ollama_model"></label>
+        <label>Ollama URL <input data-set="ollama_url"></label>
+      </div>
+      <div class="group" data-show="llm_provider=custom">
+        <label>Server URL <input data-set="custom_url" placeholder="http://127.0.0.1:1234/v1"></label>
+        <label>Model <input data-set="custom_model"></label>
+        <label>API key (if it needs one) <span class="secret-row"><input type="password" data-secret="custom_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="custom_api_key">Save</button></span></label>
+      </div>
+
+      <label class="check"><input type="checkbox" data-set="stream_replies"> Start speaking while the AI is still writing (faster replies)</label>
+      <label>Model for "what's on my screen" <input data-set="vision_model" placeholder="empty = same as above (OpenRouter picks a free one that can see)"></label>
+      <label class="check"><input type="checkbox" data-set="private_mode"> Private mode: keep email, calendar, tasks and Discord away from cloud AI</label>
+      <p class="muted">With private mode on, Jarvis still reads and lists those for you, but summaries and drafting of them need a model on this PC (Ollama or LM Studio) or private mode off. Free tiers (Gemini, Groq, Mistral, OpenRouter's free models) may use what you send to improve their products.</p>
+
+      <h3>Desktop</h3>
+      <label>Browser path (Opera GX) <input data-set="browser_path"></label>
+      <label class="check"><input type="checkbox" id="overlay-toggle"> Floating orb: a small always-on-top Jarvis (click to talk, double-click to open this window, drag to move)</label>
+      <label class="check"><input type="checkbox" data-set="game_mode_auto"> Game mode turns on by itself when a game is in front, and stops listening until you close it</label>
+
+      <h3>Confirmations</h3>
+      <label class="check"><input type="checkbox" data-set="confirm_close"> Ask before closing apps</label>
+      <label class="check"><input type="checkbox" data-set="confirm_sends"> Ask before sending messages and emails</label>
+      <p class="muted">With these off, Jarvis acts as soon as you ask. A send the AI starts by itself (for example while reading an email) still waits for your approval.</p>
+
+      <h3>Routines</h3>
+      <ul id="routines"></ul>
+
+      <h3>Memory and privacy</h3>
+      <ul id="memories"></ul>
+      <button class="small danger" id="clear-history">Clear conversation history</button>
+    </div>
+
+    <div class="panel tab grow hidden scroll" id="tab-connect">
+      <div class="card">
+        <h3>Microsoft: Outlook.com mail, Calendar and To Do</h3>
+        <p class="muted">Official Microsoft sign-in (Microsoft Graph). You need a free app registration first; see SETUP.md.</p>
+        <label>Application (client) ID <input data-set="ms_client_id" placeholder="00000000-0000-0000-0000-000000000000"></label>
+        <div class="row"><span id="ms-status" class="muted"></span>
+          <span><button class="small" id="ms-connect">Sign in</button> <button class="small danger" id="ms-disconnect">Disconnect</button></span></div>
+      </div>
+      <div class="card">
+        <h3>Google: Gmail, Calendar, Tasks and Drive</h3>
+        <p class="muted">Official Google sign-in. You need your own free OAuth client ("Desktop app") from Google Cloud first; see SETUP.md.</p>
+        <label>OAuth client ID <input data-set="google_client_id" placeholder="….apps.googleusercontent.com"></label>
+        <label>OAuth client secret <span class="secret-row"><input type="password" data-secret="google_client_secret" placeholder="paste secret, then Save"><button class="small" data-save-secret="google_client_secret">Save</button></span></label>
+        <div class="row"><span id="google-status" class="muted"></span>
+          <span><button class="small" id="google-connect">Sign in</button> <button class="small danger" id="google-disconnect">Disconnect</button></span></div>
+      </div>
+      <div class="card">
+        <h3>GitHub</h3>
+        <p class="muted">Notifications, your repos, assigned issues and review requests, and opening issues. Uses a personal access token you create on GitHub (Settings → Developer settings → Fine-grained tokens).</p>
+        <label>Personal access token <span class="secret-row"><input type="password" id="github-token" placeholder="github_pat_…"><button class="small" id="github-connect">Connect</button></span></label>
+        <div class="row"><span id="github-status" class="muted"></span><button class="small danger" id="github-disconnect">Disconnect</button></div>
+      </div>
+      <div class="card">
+        <h3>Classic Outlook (desktop)</h3>
+        <p class="muted">Reads accounts already set up in classic Outlook, including Gmail over IMAP. No cloud setup needed. Classic Outlook must be installed and signed in.</p>
+        <label class="check"><input type="checkbox" id="classic-toggle"> Allow Jarvis to use classic Outlook</label>
+        <div id="classic-status" class="muted"></div>
+      </div>
+      <div class="card">
+        <h3>Discord (bot)</h3>
+        <p class="muted">Uses your own Discord bot, invited only to the servers you choose. It can't read your personal DMs.</p>
+        <label>Bot token <span class="secret-row"><input type="password" id="discord-token" placeholder="paste bot token"><button class="small" id="discord-connect">Connect</button></span></label>
+        <div id="discord-status" class="muted"></div>
+        <div id="discord-channels"></div>
+        <button class="small danger" id="discord-disconnect">Disconnect</button>
+      </div>
+      <div class="card" data-service="notion">
+        <h3>Notion</h3>
+        <p class="muted">Search, read and add notes. Create an internal integration at notion.so/my-integrations, then share the pages you want Jarvis to see with it (page menu → Connections).</p>
+        <label>Integration token <span class="secret-row"><input type="password" data-token placeholder="ntn_… or secret_…"><button class="small" data-connect>Connect</button></span></label>
+        <label>Page for new notes (optional) <input data-set="notion_page_id" placeholder="page ID or link; empty = most recently edited shared page"></label>
+        <div class="row"><span class="muted" data-status></span><button class="small danger" data-disconnect>Disconnect</button></div>
+      </div>
+      <div class="card" data-service="slack">
+        <h3>Slack</h3>
+        <p class="muted">Read and post in channels through your own Slack app's bot (api.slack.com/apps → OAuth &amp; Permissions → Bot token, with channels:read, channels:history, chat:write, users:read). Invite the bot to each channel.</p>
+        <label>Bot token <span class="secret-row"><input type="password" data-token placeholder="xoxb-…"><button class="small" data-connect>Connect</button></span></label>
+        <div class="row"><span class="muted" data-status></span><button class="small danger" data-disconnect>Disconnect</button></div>
+      </div>
+      <div class="card" data-service="telegram">
+        <h3>Telegram</h3>
+        <p class="muted">A bot you make with @BotFather. It reads messages sent to the bot and replies to people who have messaged it first. It can't use your personal account.</p>
+        <label>Bot token <span class="secret-row"><input type="password" data-token placeholder="123456:ABC…"><button class="small" data-connect>Connect</button></span></label>
+        <div class="row"><span class="muted" data-status></span><button class="small danger" data-disconnect>Disconnect</button></div>
+      </div>
+      <div class="card" data-service="home">
+        <h3>Smart home (Home Assistant)</h3>
+        <p class="muted">Lights, switches, fans, covers, climate and scenes through your own Home Assistant. Locks and alarms are never touched.</p>
+        <label>Server address <input data-url placeholder="http://homeassistant.local:8123"></label>
+        <label>Long-lived access token <span class="secret-row"><input type="password" data-token placeholder="from your HA profile → Security"><button class="small" data-connect>Connect</button></span></label>
+        <div class="row"><span class="muted" data-status></span><button class="small danger" data-disconnect>Disconnect</button></div>
+      </div>
+      <div class="card">
+        <h3>Games, YouTube and YouTube Music</h3>
+        <p class="muted">No setup. "Play Rocket League" launches installed Steam and Epic games; "play Dracula on YouTube" or "on YouTube Music" opens the top result in your browser.</p>
+        <div id="games-status" class="muted"></div>
+      </div>
+      <div class="card">
+        <h3>WhatsApp</h3>
+        <p class="muted">There is no official way to read personal WhatsApp chats. Jarvis sends to saved contacts through the WhatsApp app (or only fills the message in, if "Ask before sending" is on).</p>
+        <label class="check"><input type="checkbox" data-set="whatsapp_enabled"> Allow WhatsApp messages</label>
+        <p class="muted">Contacts: save a number so "send hi to Sam on WhatsApp" opens that chat directly. Numbers stay on this PC.</p>
+        <div class="secret-row"><input id="wa-name" placeholder="Name, e.g. Sam"><input id="wa-phone" placeholder="+971 50 123 4567"><button class="small" id="wa-add">Add</button></div>
+        <ul id="wa-contacts"></ul>
+      </div>
+    </div>
+  </section>
+</main>
+<!--bridge--><script src="orb.js"></script><script src="app.js"></script>
+</body>
+</html>

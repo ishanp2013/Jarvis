@@ -1,0 +1,665 @@
+"""Core tests. Run:  run_tests.bat   (no apps are opened or closed: desktop actions are mocked)."""
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import numpy as np
+
+from jarvis import speech
+from jarvis.brain import Brain, TOOLS
+from jarvis.config import settings
+from jarvis.storage import Store, redact
+from jarvis.tools import windows as win
+
+
+class FakeListener:
+    stopped = False
+
+    def stop(self):
+        self.stopped = True
+
+
+def make_brain():
+    store = Store(Path(tempfile.mkdtemp()) / "t.db")
+    events, spoken = [], []
+    b = Brain(store, lambda k, d=None: events.append((k, d)), spoken.append, lambda: FakeListener())
+    return b, events, spoken
+
+
+class RouterBase(unittest.TestCase):
+    """Desktop actions mocked, AI off."""
+
+    def setUp(self):
+        self.calls = []
+        rec = lambda name: (lambda *a, **k: self.calls.append((name, a)) or f"{name} ok")
+        self.patches = [mock.patch.object(win, n, rec(n)) for n in
+                        ("open_app", "open_url", "youtube", "switch_to", "close_app", "media_key", "lock_pc")]
+        self.patches.append(mock.patch.object(win, "close_target", lambda n: [(1, "Discord", "discord", 1)]))
+        self.patches.append(mock.patch.object(settings, "get", lambda k, d=None: "off" if k == "llm_provider" else settings._data.get(k, d)))
+        for p in self.patches:
+            p.start()
+        self.brain, self.events, self.spoken = make_brain()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+
+    def ask(self, text):
+        self.brain.handle(text)
+        return self.spoken[-1] if self.spoken else ""
+
+
+class RouterTests(RouterBase):
+    def test_open_app(self):
+        self.ask("Hey Jarvis, open Opera GX.")
+        self.assertEqual(self.calls[-1], ("open_app", ("opera gx",)))
+        self.ask("launch discord")
+        self.assertEqual(self.calls[-1], ("open_app", ("discord",)))
+
+    def test_youtube(self):
+        self.assertIn("YouTube", self.ask("Open YouTube"))
+        self.assertEqual(self.calls[-1], ("youtube", (None,)))
+        self.ask("open youtube and search for lofi beats")
+        self.assertEqual(self.calls[-1], ("youtube", ("lofi beats",)))
+
+    def test_website(self):
+        self.ask("open github.com")
+        self.assertEqual(self.calls[-1], ("open_url", ("github.com",)))
+
+    def test_close_requires_confirmation(self):
+        settings._data["confirm_close"] = True
+        self.addCleanup(settings._data.pop, "confirm_close", None)
+        reply = self.ask("close discord")
+        self.assertIn("Close discord?", reply)
+        self.assertFalse(any(c[0] == "close_app" for c in self.calls), "must not close before confirmation")
+        self.assertEqual(len(self.brain.pending), 1)
+        self.ask("yes")
+        self.assertEqual(self.calls[-1], ("close_app", ("discord",)))
+        self.assertEqual(self.brain.pending, {})
+
+    def test_small_talk(self):
+        self.assertRegex(self.ask("Hey Jarvis, hi."), r"^Good (morning|afternoon|evening)")
+        self.assertIn("I'm Jarvis", self.ask("who are you"))
+        self.assertIn("Spotify", self.ask("what can you do"))
+        self.assertTrue(self.ask("thank you"))
+        self.assertTrue(self.ask("tell me a joke"))
+        self.ask("hi, open notepad")  # longer requests aren't small talk
+        self.assertEqual(self.calls[-1], ("open_app", ("notepad",)))
+
+    def test_close_without_confirmation(self):
+        self.ask("close discord")
+        self.assertEqual(self.calls[-1], ("close_app", ("discord",)))
+        self.assertEqual(self.brain.pending, {})
+
+    def test_sends_without_confirmation_only_when_asked(self):
+        b = self.brain
+        b.request = "email bob that I'll be late"
+        self.assertTrue(b._auto_ok("email_compose"))
+        b.request = "summarise my unread emails"  # the AI read something that told it to send: card instead
+        self.assertFalse(b._auto_ok("email_compose"))
+        b.request = "send hi in general on discord"
+        with mock.patch.dict(settings._data, {"confirm_sends": True}):
+            self.assertFalse(b._auto_ok("discord_post"))
+        sent = []
+        with mock.patch.dict(TOOLS["discord_post"], fn=lambda **a: sent.append(a) or "posted"):
+            b.request = "summarise the announcements"
+            out = b._run_tool("discord_post", {"channel": "general", "text": "x"}, [])
+            self.assertEqual(out["status"], "awaiting_user_approval")
+            b.request = "post hello in general"
+            self.assertEqual(b._run_tool("discord_post", {"channel": "general", "text": "hello"}, []), "posted")
+        self.assertEqual(sent, [{"channel": "general", "text": "hello"}])
+
+    def test_new_connections_route(self):
+        from jarvis.tools import github, weather, whatsapp as wa
+        with mock.patch.object(weather, "forecast", lambda p="": f"weather:{p}"), \
+             mock.patch.object(wa, "send_to", lambda n, t: f"sent:{n}:{t}"), \
+             mock.patch.object(github, "notifications", lambda: [{"repo": "a/b", "title": "Fix it"}]):
+            self.assertIn("weather:dubai", self.ask("what's the weather in Dubai"))
+            self.assertIn("weather:", self.ask("will it rain tomorrow"))
+            self.assertIn("sent:sam:hi", self.ask("send hi to sam on whatsapp"))
+            self.assertIn("a/b: Fix it", self.ask("check my github notifications"))
+
+    def test_close_cancel(self):
+        settings._data["confirm_close"] = True
+        self.addCleanup(settings._data.pop, "confirm_close", None)
+        self.ask("close discord")
+        self.ask("no")
+        self.assertFalse(any(c[0] == "close_app" for c in self.calls))
+
+    def test_send_needs_button_not_voice(self):
+        pid = self.brain._request_approval("discord_post", {"channel": "general", "text": "hi"})
+        with mock.patch.dict(TOOLS["discord_post"], fn=lambda **a: self.calls.append(("sent", a)) or "sent"):
+            reply = self.ask("yes send it")
+            self.assertIn("press the approve button", reply)
+            self.assertFalse(any(c[0] == "sent" for c in self.calls))
+            self.brain.approve(pid, {"text": "hi (edited)"})
+            self.assertEqual(self.calls[-1], ("sent", {"channel": "general", "text": "hi (edited)"}))
+
+    def test_running_and_sysinfo(self):
+        self.assertIn("apps open", self.ask("what's running on my computer?"))
+        self.assertIn("CPU at", self.ask("system status"))
+
+    def test_memory(self):
+        self.ask("remember that my exam is on Friday")
+        self.assertIn("exam is on Friday", self.ask("what do you remember"))
+
+    def test_whatsapp_honest(self):
+        self.assertIn("official", self.ask("read my whatsapp messages"))
+
+    def test_whatsapp_draft_offline(self):
+        from jarvis.tools import whatsapp as wa
+        cases = {
+            "send hi to sam in whatsapp": ("sam", "hi"),
+            "Hey Jarvis, send hi to Sam on WhatsApp.": ("Sam", "hi"),
+            "send good morning to sam on whats app": ("sam", "good morning"),
+            "message sam on whatsapp saying I'll be late": ("sam", "I'll be late"),
+            "send sam a whatsapp saying see you at 5": ("sam", "see you at 5"),
+            "text are you coming to Amma on WhatsApp": ("Amma", "are you coming"),
+        }
+        for said, expected in cases.items():
+            self.assertEqual(wa.parse(said.replace("Hey Jarvis, ", "")), expected, said)
+        self.assertIsNone(wa.parse("open whatsapp"))
+        opened = []
+        with mock.patch.object(wa.os, "startfile", opened.append), \
+             mock.patch.dict(settings._data, {"whatsapp_contacts": {"Sam": "971500000000"}, "whatsapp_enabled": True, "confirm_sends": True}):
+            reply = self.ask("send hi to sam in whatsapp")
+            self.assertEqual(opened[-1], "whatsapp://send?phone=971500000000&text=hi")
+            self.assertIn("press Send", reply)
+            self.ask("send hello there to Unknown Person on whatsapp")
+            self.assertEqual(opened[-1], "whatsapp://send?text=hello%20there")
+            self.assertIn("don't have a number", self.spoken[-1])
+        with mock.patch.object(wa.os, "startfile", opened.append), mock.patch.dict(settings._data, {"whatsapp_enabled": False, "confirm_sends": True}):
+            n = len(opened)
+            self.assertIn("turned off", self.ask("send hi to sam on whatsapp"))
+            self.assertEqual(len(opened), n)
+
+    def test_spotify_commands(self):
+        from jarvis.tools import spotify as sp
+        cases = {
+            "play any song in spotify": ("any", ""), "play some music": ("any", ""), "play something": ("any", ""),
+            "play my liked songs": ("liked", ""), "play my liked songs on spotify": ("liked", ""),
+            "play my favourite songs": ("liked", ""),
+            "play the song dracula": ("song", "dracula"), "play dracula": ("song", "dracula"),
+            "play dracula by tame impala on spotify": ("song", "dracula by tame impala"),
+            "play the song blinding lights in spoitfy": ("song", "blinding lights"),
+        }
+        for said, expected in cases.items():
+            self.assertEqual(sp.parse(said), expected, said)
+        for other in ("play music", "play pause", "play lofi on youtube", "open spotify"):
+            self.assertIsNone(sp.parse(other), other)
+        played = []
+        with mock.patch.object(sp, "play", lambda *a: played.append(a) or "Playing."):
+            self.ask("Hey Jarvis, play the song Dracula.")
+            self.ask("play any song in spotify")
+            self.ask("play my liked songs")
+            self.ask("play music")  # stays the media key (resume)
+        self.assertEqual(played, [("song", "dracula"), ("any", ""), ("liked", "")])
+        self.assertEqual(self.calls[-1], ("media_key", ("play pause",)))
+
+    def test_atticus_style_commands(self):
+        from jarvis.tools import files, layout, uia
+        got = []
+        rec = lambda name: (lambda *a: got.append((name, a)) or f"{name} done")
+        with mock.patch.object(layout, "arrange", rec("arrange")), mock.patch.object(uia, "press", rec("press")), \
+             mock.patch.object(files, "find", rec("find")), mock.patch.dict(settings._data, {"routines": {}}):
+            self.ask("put notepad on the left and calculator on the right")
+            self.assertEqual(got[-1], ("arrange", ([("notepad", "left", None), ("calculator", "right", None)],)))
+            self.ask("maximise discord")
+            self.assertEqual(got[-1][1][0], [("discord", "maximise", None)])
+            self.ask("press seven in calculator")
+            self.assertEqual(got[-1], ("press", ("seven", "calculator")))
+            n = len(got)
+            self.assertIn("press approve", self.ask("click send in outlook"))
+            self.assertEqual(len(got), n, "risky buttons wait for the card")
+            self.ask("yes")  # a spoken yes isn't enough for a risky button
+            self.assertEqual(len(got), n)
+            self.ask("find my notes about the tokyo trip")
+            self.assertEqual(got[-1], ("find", ("notes about the tokyo trip",)))
+            self.assertIsNone(files.parse("search the web for cats"))
+            self.assertIsNone(files.parse("find a good restaurant"))
+            # routines
+            reply = self.ask("when I say focus mode, close discord and open notepad")
+            self.assertIn("focus mode", reply)
+            self.assertEqual(settings._data["routines"]["focus mode"], ["close discord", "open notepad"])
+            self.brain.pending.clear()
+            self.ask("focus mode")
+            self.assertEqual([c[0] for c in self.calls[-2:]], ["close_app", "open_app"])
+            self.assertIn("focus mode", self.ask("what routines do I have"))
+            self.ask("forget the focus mode routine")
+            self.assertEqual(settings._data["routines"], {})
+
+    def test_says_sir(self):
+        with mock.patch.dict(settings._data, {"honorific": "sir"}):
+            a = Brain._address
+            self.assertEqual(a("Opening YouTube."), "Opening YouTube, sir.")
+            self.assertEqual(a("Yes?"), "Yes, sir?")
+            self.assertEqual(a("Done"), "Done, sir.")
+            self.assertEqual(a("Very good, sir. Opening it now."), "Very good, sir. Opening it now.")
+            self.assertIn("on the card, sir.", self.ask("click delete in calculator"))
+            self.ask("")
+            self.assertEqual(self.spoken[-1], "Yes, sir?")
+        with mock.patch.dict(settings._data, {"honorific": ""}):
+            self.assertEqual(Brain._address("Opening YouTube."), "Opening YouTube.")
+
+    def test_mute(self):
+        self.ask("mute the microphone")
+        self.assertFalse(settings._data["mic_enabled"])
+        settings.update({"mic_enabled": True})
+
+    def test_no_llm_message(self):
+        self.assertIn("isn't configured", self.ask("write me a poem about the sea"))
+
+    def test_private_mode_keeps_mail_local(self):
+        from jarvis import brain as B
+        fake_mail = mock.Mock(unread=lambda n: [{"from": "Ann", "subject": "Hi"}])
+        with mock.patch.object(settings, "get", lambda k, d=None: {"llm_provider": "gemini", "private_mode": True}.get(k, settings._data.get(k, d))), \
+             mock.patch.object(B, "mail", lambda: fake_mail), \
+             mock.patch.object(self.brain, "_llm", side_effect=AssertionError("cloud AI must not be called")):
+            self.assertIn("From Ann: Hi", self.ask("read my emails"))
+            names = {t["name"] for t in self.brain._tools()}
+            self.assertFalse(names & B.PERSONAL_TOOLS)
+            self.assertIn("error", self.brain._run_tool("email_unread", {}, []))
+
+    def test_stop_is_silent(self):
+        n = len(self.spoken)
+        self.ask("stop")
+        self.assertEqual(len(self.spoken), n)
+
+
+class SafetyTests(unittest.TestCase):
+    def test_redaction(self):
+        self.assertNotIn("abc123secret", redact("token=abc123secret"))
+        self.assertNotIn("AIzaSyD", redact("key AIzaSyD" + "x" * 33))
+        self.assertIn("[REDACTED]", redact("Authorization: Bearer eyJhbGciOi.payload.sig"))
+
+    def test_approval_tools(self):
+        for name in ("email_compose", "email_reply", "discord_post"):
+            self.assertEqual(TOOLS[name]["approval"], "button", name)
+        self.assertEqual(TOOLS["close_app"]["approval"], "voice")
+
+    def test_protected_processes(self):
+        with mock.patch.object(win, "_windows", lambda: [(1, "File Explorer", "explorer", 1)]):
+            self.assertEqual(win.close_target("explorer"), [])
+
+
+class ProviderTests(unittest.TestCase):
+    """Each AI provider's request format, against a fake server: a tool call, then a final answer."""
+
+    def setUp(self):
+        self.brain, _, _ = make_brain()
+        self.ran = []
+        self.patch = mock.patch.dict(TOOLS["system_info"], fn=lambda: self.ran.append("system_info") or {"cpu_percent": 5})
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+
+    def use(self, provider):
+        values = {"llm_provider": provider, "private_mode": False}
+        p = mock.patch.object(settings, "get", lambda k, d=None: values.get(k, settings._data.get(k, d)))
+        p.start()
+        self.addCleanup(p.stop)
+        k = mock.patch("jarvis.brain.get_secret", lambda name: "test-key")
+        k.start()
+        self.addCleanup(k.stop)
+
+    def test_openai_compatible(self):
+        from jarvis import providers
+        self.use("groq")
+        replies = iter([
+            {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "system_info", "arguments": "{}"}}]}}]},
+            {"choices": [{"message": {"role": "assistant", "content": "CPU is at 5%."}}]},
+        ])
+        sent = []
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            sent.append((url, json, headers))
+            return mock.Mock(status_code=200, json=lambda: next(replies))
+        with mock.patch("jarvis.brain.httpx.post", fake_post):
+            reply, _ = self.brain._llm("how's my cpu")
+        self.assertEqual(reply, "CPU is at 5%.")
+        self.assertEqual(self.ran, ["system_info"])
+        self.assertEqual(sent[0][0], providers.PROVIDERS["groq"]["url"] + "/chat/completions")
+        self.assertEqual(sent[0][2]["Authorization"], "Bearer test-key")
+        self.assertEqual(sent[1][1]["messages"][-2], {"role": "tool", "tool_call_id": "c1", "content": '{"cpu_percent": 5}'})
+
+    def test_anthropic(self):
+        import anthropic
+        self.use("anthropic")
+        from types import SimpleNamespace as Block  # (mock.Mock treats name= specially)
+        responses = iter([
+            mock.Mock(stop_reason="tool_use", content=[Block(type="tool_use", id="t1", name="system_info", input={})]),
+            mock.Mock(stop_reason="end_turn", content=[Block(type="text", text="CPU is at 5%.")]),
+        ])
+        calls = []
+        client = mock.Mock()
+        client.beta.messages.create = lambda **kw: calls.append(kw) or next(responses)
+        with mock.patch.object(anthropic, "Anthropic", lambda **kw: client):
+            reply, _ = self.brain._llm("how's my cpu")
+        self.assertEqual(reply, "CPU is at 5%.")
+        self.assertEqual(self.ran, ["system_info"])
+        self.assertEqual(calls[0]["model"], "claude-opus-5-5")
+        self.assertEqual(calls[0]["fallbacks"], "default")
+        result = calls[1]["messages"][-2]["content"][0]
+        self.assertEqual((result["type"], result["tool_use_id"], result["is_error"]), ("tool_result", "t1", False))
+
+    def test_cloud_vs_local(self):
+        from jarvis import providers
+        for name, cloud in (("anthropic", True), ("ollama", False), ("custom", False)):
+            with mock.patch.object(settings, "get", lambda k, d=None, n=name: n if k == "llm_provider" else settings._data.get(k, d)):
+                self.assertEqual(providers.is_cloud(), cloud, name)
+
+
+class WebModeTests(unittest.TestCase):
+    """Browser mode server: serves the page, and only the page's own token can call Jarvis."""
+
+    def test_server_security(self):
+        import http.client
+        from http.server import ThreadingHTTPServer
+        from jarvis import web
+
+        class FakeApi:
+            calls = []
+
+            def send_text(self, text):
+                self.calls.append(text)
+                return "ok"
+
+        api, hub = FakeApi(), web.Hub()
+        ui = Path(__file__).resolve().parent.parent / "ui"
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), None)
+        port = srv.server_address[1]
+        srv.RequestHandlerClass = web.make_handler(api, ui.resolve(), port, hub)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            def req(method, path, body=None, headers=None):
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                c.request(method, path, body, {"Host": f"127.0.0.1:{port}", **(headers or {})})
+                r = c.getresponse()
+                return r.status, r.read()
+
+            status, page = req("GET", "/")
+            self.assertEqual(status, 200)
+            self.assertIn(web.TOKEN.encode(), page)
+            self.assertIn(b"web-bridge.js", page)
+            self.assertEqual(req("POST", "/api/send_text", b'["hi"]')[0], 403)  # no token
+            self.assertEqual(req("POST", "/api/send_text", b'["hi"]', {"Host": f"evil.example:{port}", "X-Jarvis-Token": web.TOKEN})[0], 403)
+            self.assertEqual(req("POST", "/api/_secret", b"[]", {"X-Jarvis-Token": web.TOKEN})[0], 404)
+            self.assertEqual(req("GET", "/../jarvis/config.py")[0], 404)
+            self.assertEqual(req("GET", "/events?token=wrong")[0], 403)
+            self.assertEqual(req("POST", "/api/send_text", b'["hi"]', {"X-Jarvis-Token": web.TOKEN}), (200, b'"ok"'))
+            self.assertEqual(api.calls, ["hi"])
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+
+class SpotifyScreenTests(unittest.TestCase):
+    """The Play button is found in a capture of the Spotify window; these use drawn stand-ins."""
+
+    def page(self, icon, shuffle_on=None):
+        img = np.full((600, 1000, 3), 18, np.uint8)
+        yy, xx = np.mgrid[:600, :1000]
+        img[(xx - 120) ** 2 + (yy - 300) ** 2 <= 36 ** 2] = (30, 215, 96)
+        if icon == "play":
+            img[(xx >= 110) & (xx <= 134) & (abs(yy - 300) <= (134 - xx) // 2)] = (0, 0, 0)
+        else:
+            img[285:316, 106:115] = img[285:316, 126:135] = (0, 0, 0)
+        img[290:296, 360:366] = (30, 215, 96)  # a small green icon elsewhere must be ignored
+        if shuffle_on is not None:
+            img[292:309, 200:226] = (30, 215, 96) if shuffle_on else (180, 180, 180)
+        return img
+
+    def test_button_state(self):
+        from jarvis.tools import spotify as sp
+        spot = sp.find_play_button(self.page("play"))
+        self.assertLess(abs(spot[0] - 120) + abs(spot[1] - 300), 6)
+        self.assertFalse(sp.shows_pause(self.page("play"), spot))
+        self.assertTrue(sp.shows_pause(self.page("pause"), sp.find_play_button(self.page("pause"))))
+        self.assertIsNone(sp.find_play_button(np.full((600, 1000, 3), 18, np.uint8)))
+
+    def test_shuffle_toggle(self):
+        from jarvis.tools import spotify as sp
+        for on in (False, True):
+            img = self.page("play", shuffle_on=on)
+            x, y, state = sp.find_shuffle(img, sp.find_play_button(img))
+            self.assertEqual(state, on)
+            self.assertLess(abs(x - 213), 6)
+
+    def test_song_choice(self):
+        from jarvis.tools import spotify as sp
+        hits = [("Dracula - Sped Up - song and lyrics by Someone | Spotify", "a" * 22),
+                ("Dracula - song and lyrics by Tame Impala | Spotify", "b" * 22),
+                ("Drama - song and lyrics by Other | Spotify", "c" * 22)]
+        sp._found.clear()
+        with mock.patch.object(sp, "_track_hits", lambda q: hits):
+            self.assertEqual(sp.find_track("dracula")[0], "b" * 22)
+            self.assertEqual(sp.find_track("dracula by tame impala")[0], "b" * 22)
+        sp._found.clear()
+
+
+class VoicePipelineTests(unittest.TestCase):
+    """Synthesises 'Hey Jarvis, open YouTube' and pushes it through the real wake word + listener."""
+
+    @classmethod
+    def setUpClass(cls):
+        audio, rate = speech.synth_edge("Hey Jarvis.")
+        cmd, _ = speech.synth_edge("Open YouTube.")
+        def to16k(a):  # 24 kHz -> 16 kHz
+            return np.interp(np.arange(0, len(a), 1.5), np.arange(len(a)), a).astype(np.int16)
+        silence = np.zeros(16000, dtype=np.int16)
+        cls.clip = np.concatenate([silence, to16k(audio), np.zeros(3200, np.int16), to16k(cmd), silence, silence])
+
+    def test_wake_and_transcribe(self):
+        from jarvis.listener import Listener
+        got, woke = [], threading.Event()
+        lst = Listener(speech.WakeWord(), got.append, woke.set, lambda *a: None)
+        lst.stream = True  # pretend the mic is open; frames are fed by hand below
+        for i in range(0, len(self.clip) - 1280, 1280):
+            lst.frames.put(self.clip[i:i + 1280])
+            time.sleep(0.004)
+        deadline = time.time() + 10
+        while not got and time.time() < deadline:
+            time.sleep(0.1)
+        self.assertTrue(woke.is_set(), "wake word not detected")
+        self.assertTrue(got, "utterance not captured")
+        text = speech.STT().transcribe(got[0]).lower()
+        self.assertIn("youtube", text)
+
+    def test_follow_up_and_interrupt(self):
+        from jarvis.app import Jarvis
+        from jarvis.listener import Listener
+        j = Jarvis()
+        j.listener = Listener(speech.WakeWord(), lambda a: None, j._on_wake, lambda *a: None)
+        j.listener.stream = True
+        j.voice_turn = True
+        j._on_speaking(False)  # a spoken reply just finished
+        self.assertEqual(j.listener.mode, "listening", "should keep listening for a follow-up")
+        j.stop_all()
+        self.assertEqual(j.listener.mode, "idle")
+        gen = j.brain.cancel_gen
+        with mock.patch.object(speech, "chime", lambda: None):
+            j._on_wake()  # "Hey Jarvis" while busy cancels the current reply
+        self.assertGreater(j.brain.cancel_gen, gen)
+
+    def test_tts_providers(self):
+        a, r = speech.synth_edge("Testing.")
+        self.assertGreater(len(a), 1000)
+        a, r = speech.synth_windows("Testing.")
+        self.assertGreater(len(a), 1000)
+
+    def test_sentence_split(self):
+        self.assertEqual(len(speech._sentences("Hello there. This is a much longer second sentence that goes on. Ok.")), 2)
+
+
+class NewFeatureRouteTests(RouterBase):
+    """Games, YouTube, screen, clipboard, game mode, smart home, Notion and Telegram routes (all mocked)."""
+
+    def test_games(self):
+        from jarvis.tools import games
+        fake = {"name": "Rocket League®", "store": "Epic", "launch": "x", "folder": ""}
+        with mock.patch.object(games, "find", lambda q: fake if "rocket" in q else None), \
+                mock.patch.object(games, "launch", lambda q: f"Launching {q}."):
+            self.assertEqual(self.ask("play rocket league"), "Launching rocket league, sir.")
+            self.ask("open notepad")  # not a game: still opens the app
+            self.assertEqual(self.calls[-1], ("open_app", ("notepad",)))
+
+    def test_youtube_plays_top_result(self):
+        from jarvis.tools import youtube
+        played = []
+        with mock.patch.object(youtube, "play", lambda q, music=False: played.append((q, music)) or "Playing."):
+            self.ask("play dracula on youtube")
+            self.ask("play blinding lights on youtube music")
+        self.assertEqual(played, [("dracula", False), ("blinding lights", True)])
+
+    def test_game_mode_by_voice(self):
+        seen = []
+        self.brain.set_game_mode = lambda on: seen.append(on) or "ok"
+        self.ask("game mode on")
+        self.ask("turn off game mode")
+        self.assertEqual(seen, [True, False])
+
+    def test_screen_and_clipboard_need_ai(self):
+        from jarvis.tools import screen
+        self.assertIn("needs an AI model", self.ask("what's on my screen"))
+        with mock.patch.object(screen, "get_clipboard", lambda: "hola amigo"):
+            self.assertIn("needs an AI model", self.ask("translate what I copied into English"))
+            self.assertIn("hola amigo", self.ask("read my clipboard"))
+
+    def test_screen_and_clipboard_with_ai(self):
+        from jarvis.tools import screen
+        with mock.patch.object(self.brain, "_llm_available", lambda: True), \
+                mock.patch.object(self.brain, "_vision", lambda q, address=True: "A code editor with an error."), \
+                mock.patch.object(self.brain, "_llm", lambda text: (f"LLM<{text}>", [])), \
+                mock.patch.object(screen, "get_clipboard", lambda: "hola amigo"):
+            self.assertIn("code editor", self.ask("explain this error"))
+            reply = self.ask("translate what I copied into English")
+        self.assertIn("translate the following text from my clipboard into english", reply)
+        self.assertIn("hola amigo", reply)
+
+    def test_smart_home(self):
+        from jarvis.tools import home
+        done = []
+        with mock.patch.object(home, "connected", lambda: True), \
+                mock.patch.object(home, "find", lambda n: {"name": n} if "light" in n or "fan" in n else None), \
+                mock.patch.object(home, "control", lambda d, a, v=None: done.append((d, a, v)) or "ok"):
+            self.ask("turn on the bedroom light")
+            self.ask("turn the fan off")
+            self.ask("dim the desk light to 30%")
+        self.assertEqual(done, [("bedroom light", "on", None), ("fan", "off", None), ("desk light", "brightness", 30)])
+
+    def test_notion_and_telegram(self):
+        from jarvis.tools import notion, telegram
+        with mock.patch.object(notion, "add_note", lambda t, title="": f"noted {t}"), \
+                mock.patch.object(telegram, "updates", lambda n=20: [{"from": "Sam", "chat": "Sam", "text": "hi"}]):
+            self.assertIn("noted buy milk", self.ask("add buy milk to notion"))
+            self.assertIn("Sam: hi", self.ask("check telegram"))
+
+
+class StreamingTests(unittest.TestCase):
+    def test_sentence_stream(self):
+        st = speech.SentenceStream()
+        for piece in ["Tokyo is the capital of Japan, home to millions. ", "It has great food", ". And trains."]:
+            st.feed(piece)
+        self.assertTrue(st.started)  # the first sentence is ready before the reply ends
+        st.finish(lambda last: last[:-1] + ", sir.")
+        out = list(st)
+        self.assertEqual(out[0], "Tokyo is the capital of Japan, home to millions.")
+        self.assertEqual(out[-1], "It has great food. And trains, sir.")
+
+    def test_openai_stream_round(self):
+        """Streamed text and a tool call split over several chunks are put back together."""
+        brain, _, _ = make_brain()
+        got = []
+        brain._live = got.append
+        lines = [
+            'data: {"choices":[{"delta":{"content":"Checking. "}}]}',
+            ": OPENROUTER PROCESSING",
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"system_","arguments":""}}]}}]}',
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"info","arguments":"{}"}}]}}]}',
+            "data: [DONE]",
+        ]
+
+        class Resp:
+            status_code = 200
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def iter_lines(self): return iter(lines)
+        with mock.patch("jarvis.brain.httpx.stream", lambda *a, **k: Resp()):
+            msg = brain._openai_stream("u", {}, {"model": "m"})
+        self.assertEqual(got, ["Checking. "])
+        self.assertEqual(msg["content"], "Checking. ")
+        self.assertEqual(msg["tool_calls"][0]["function"], {"name": "system_info", "arguments": "{}"})
+
+    def test_handle_speaks_while_streaming(self):
+        """The first sentences are spoken before the AI finishes, and 'sir' is added once at the end."""
+        brain, events, spoken = make_brain()
+
+        def fake_llm(text):
+            for piece in ["The weather in Dubai is hot and sunny today. ", "Expect highs of thirty five. ", "Stay cool."]:
+                brain._emit_text(piece)
+            return "Stay cool.", []
+        values = {"honorific": "sir", "stream_replies": True}
+        with mock.patch.object(settings, "get", lambda k, d=None: values.get(k, settings._data.get(k, d))), \
+                mock.patch.object(brain, "_quick", lambda t: None), mock.patch.object(brain, "_llm", fake_llm):
+            brain.handle("what's the weather like")
+        self.assertEqual(len(spoken), 1)
+        self.assertIsInstance(spoken[0], speech.SentenceStream)
+        said = list(spoken[0])
+        self.assertEqual(said[0], "The weather in Dubai is hot and sunny today.")
+        self.assertEqual(said[-1], "Expect highs of thirty five. Stay cool, sir.")  # short endings join the one before
+        final = [d for k, d in events if k == "message" and d["role"] == "assistant"][-1]["text"]
+        self.assertTrue(final.endswith("Stay cool, sir."))
+        self.assertEqual(final.count("sir"), 1)
+
+
+class NewSafetyTests(unittest.TestCase):
+    def test_screen_only_when_asked(self):
+        brain, _, _ = make_brain()
+        brain.request = "summarise my emails"
+        self.assertIn("error", brain._run_tool("look_at_screen", {"question": "x"}, []))
+
+    def test_new_sends_follow_the_rules(self):
+        from jarvis.brain import SEND_TOOLS, PERSONAL_TOOLS
+        self.assertTrue({"slack_post", "telegram_send"} <= SEND_TOOLS)
+        self.assertTrue({"notion_search", "drive_read", "slack_read", "telegram_messages"} <= PERSONAL_TOOLS)
+        self.assertEqual(TOOLS["slack_post"]["approval"], "button")
+
+    def test_png_encoder(self):
+        import zlib
+        from jarvis.tools import screen
+        img = np.zeros((4, 6, 3), dtype=np.uint8)
+        img[1, 2] = (255, 128, 0)
+        data = screen.png(img)
+        self.assertTrue(data.startswith(b"\x89PNG"))
+        raw = zlib.decompress(data[data.index(b"IDAT") + 4:data.index(b"IEND") - 8])
+        self.assertEqual(len(raw), 4 * (1 + 6 * 3))
+        self.assertEqual(raw[1 * 19 + 1 + 2 * 3:1 * 19 + 1 + 2 * 3 + 3], bytes([255, 128, 0]))
+
+    def test_game_matching_is_strict(self):
+        from jarvis.tools import games
+        lib = [{"name": n, "store": "Steam", "launch": "x", "folder": ""} for n in
+               ("Rocket League®", "Fall Guys", "Five Nights at Freddy's: Into the Pit", "Grand Theft Auto V")]
+        with mock.patch.object(games, "installed", lambda refresh=False: lib):
+            self.assertEqual(games.find("rocket league")["name"], "Rocket League®")
+            self.assertEqual(games.find("fnaf")["name"], "Five Nights at Freddy's: Into the Pit")
+            self.assertEqual(games.find("gta")["name"], "Grand Theft Auto V")
+            self.assertIsNone(games.find("notepad"))
+            self.assertIsNone(games.find("calculator"))
+
+    def test_service_token_restored_on_failure(self):
+        from jarvis import app as appmod
+        saved = {}
+        with mock.patch.object(appmod.config, "get_secret", lambda n: saved.get(n, "")), \
+                mock.patch.object(appmod.config, "set_secret", lambda n, v: saved.__setitem__(n, v)):
+            saved["notion_token"] = "good"
+            bad = lambda: (_ for _ in ()).throw(RuntimeError("401"))
+            with self.assertRaises(RuntimeError):
+                appmod.Api._try_token("notion_token", "wrong", bad)
+            self.assertEqual(saved["notion_token"], "good")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

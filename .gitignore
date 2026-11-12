@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local only: machine paths, logs, scratch files
+.claude/
+*.log
+*.tmp
+*.db
+
+# Secrets never belong here (Jarvis keeps them in Windows Credential Manager)
+.env
+*.bin
+settings.json
