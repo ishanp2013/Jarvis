@@ -12,7 +12,7 @@ import subprocess
 import psutil
 import webview
 
-from . import config, providers, speech
+from . import autostart, config, power, providers, speech
 from .brain import Brain
 from .config import secret_status, settings
 from .listener import Listener
@@ -55,7 +55,8 @@ class Jarvis:
         self.game_mode, self._game_auto, self._game_off_checks, self._mic_before_game = False, False, 0, False
         self.overlay = None        # pywebview window (desktop mode) or subprocess (browser mode)
         self.api = None
-        self.port = None           # browser mode's port
+        self.port = None           # the local server's port
+        self.awake = None          # power.KeepAwake once booted
 
     # ---------- events to the UI
     def emit(self, kind, data=None):
@@ -129,15 +130,10 @@ class Jarvis:
                                             cwd=str(ROOT), creationflags=subprocess.CREATE_NO_WINDOW)
 
     def show_dashboard(self):
-        if self.window:
-            try:
-                self.window.restore()
-                self.window.show()
-            except Exception:
-                pass
-        elif self.port:
-            import webbrowser
-            webbrowser.open(f"http://127.0.0.1:{self.port}/")
+        """Opens (or brings forward) the dashboard window, a separate small process."""
+        if self.port:
+            subprocess.Popen([_pythonw(), "-W", "ignore", "-m", "jarvis", "--window", "--port", str(self.port)],
+                             cwd=str(ROOT), creationflags=subprocess.CREATE_NO_WINDOW)
 
     # ---------- startup
     def boot(self):
@@ -162,6 +158,8 @@ class Jarvis:
         self.emit("ready", self.ready)
         if settings.get("overlay_enabled"):
             self.show_overlay(True)
+        self.awake = power.KeepAwake(lambda on: self.store.log(
+            "power", "Keeping the laptop awake while plugged in" if on else "Normal sleep allowed (on battery or setting off)"))
         threading.Thread(target=self._monitor, daemon=True).start()
 
     def _monitor(self):
@@ -205,6 +203,12 @@ class Jarvis:
 
     def speak(self, text):
         if not text:
+            return
+        if self.brain.source == "phone":  # the phone shows (and can read out) the reply; the laptop stays quiet
+            if not isinstance(text, str):
+                for _ in text:  # drain a streamed reply so its producer finishes
+                    pass
+            self.emit("state", {"state": "idle"})
             return
         self.emit("state", {"state": "speaking"})
         self.speaker.say(text)
@@ -260,6 +264,9 @@ class Api:
             "game_mode": {"on": self._j.game_mode},
             "overlay": {"on": bool(self._j.overlay)},
             "wake": {"model": settings.get("wake_model"), "phrase": speech.wake_phrase()},
+            "autostart": {"on": autostart.enabled()},
+            "remote": {"host": settings.get("remote_host") or "", "devices": len(self._j.store.devices())},
+            "power": {"keep_awake": bool(self._j.awake and self._j.awake.active), "battery": power.battery()},
         }
 
     # ---------- token connections (Notion, Slack, Telegram, Home Assistant)
@@ -319,8 +326,104 @@ class Api:
         j.store.log("settings", f"Wake word set to {speech.wake_phrase()}")
         return {"ok": True, "phrase": speech.wake_phrase()}
 
-    def send_text(self, text):
-        threading.Thread(target=self._j.brain.handle, args=(text, "text"), daemon=True).start()
+    def send_text(self, text, source="text"):
+        threading.Thread(target=self._j.brain.handle, args=(text, source), daemon=True).start()
+
+    def voice(self, audio_b64, source="phone"):
+        """A voice note recorded on the phone: transcribed here with the same on-device Whisper."""
+        import base64
+        import io
+        from faster_whisper.audio import decode_audio
+        if not self._j.ready["stt"]:
+            return {"ok": False, "error": "Speech recognition is still loading on the laptop."}
+        audio = decode_audio(io.BytesIO(base64.b64decode(audio_b64.split(",")[-1])), sampling_rate=16000)
+        text = self._j.stt.transcribe((audio * 32767).astype("int16"))
+        if text:
+            self.send_text(text, source)
+        return {"ok": bool(text), "text": text}
+
+    # ---------- the laptop, as seen from the phone
+    def ping(self):
+        return {"ok": True, "time": time.time()}
+
+    def laptop_status(self):
+        j = self._j
+        vm = psutil.virtual_memory()
+        return {"name": os.environ.get("COMPUTERNAME", "Laptop"), "cpu": psutil.cpu_percent(interval=0.2), "ram": vm.percent,
+                "battery": power.battery(), "keep_awake": bool(j.awake and j.awake.active), "game_mode": j.game_mode,
+                "state": j.state, "mic": bool(j.listener and j.listener.stream),
+                "uptime_h": round((time.time() - psutil.boot_time()) / 3600, 1)}
+
+    def screenshot(self):
+        """The laptop's screen as an image the phone can show. Nothing is saved."""
+        import base64
+        from .tools import screen
+        self._j.store.log("remote", "Screenshot sent to a paired phone or the dashboard")
+        return "data:image/png;base64," + base64.b64encode(screen.capture(max_width=1280)).decode()
+
+    def running_apps(self):
+        return win.running_apps()
+
+    def lock_laptop(self):
+        self._j.store.log("remote", "Laptop locked remotely")
+        return win.lock_pc()
+
+    def power(self, action):
+        """Restart or shut down after a 30-second countdown (the phone asks you to confirm first)."""
+        self._j.store.log("remote", f"{action} requested")
+        return win.power_action(action, 30)
+
+    def cancel_power(self):
+        return win.cancel_power()
+
+    # ---------- phones
+    def pair_start(self):
+        code = self._pairing.start() if getattr(self, "_pairing", None) else None
+        host = settings.get("remote_host") or ""
+        url = f"https://{host}/" if host else ""
+        qr = ""
+        if url:
+            try:
+                import segno
+                qr = segno.make(f"{url}#pair={code}", error="m").svg_inline(scale=5, dark="#ffcf7a", light="#0b0703")
+            except Exception:
+                qr = ""
+        return {"code": code, "url": url, "qr": qr, "minutes": 5}
+
+    def _on_paired(self, name):
+        self._j.store.log("remote", f"Paired a new device: {name}")
+        self._j.emit("paired", {"name": name})
+
+    def devices(self):
+        return self._j.store.devices()
+
+    def remove_device(self, dev_id):
+        self._j.store.remove_device(dev_id)
+        self._j.store.log("remote", f"Removed paired device #{dev_id}")
+        return self._j.store.devices()
+
+    def remote_status(self):
+        """Is Tailscale installed and running here, and what's this laptop's private address?"""
+        exe = _tailscale()
+        out = {"installed": bool(exe), "host": settings.get("remote_host") or "", "running": False}
+        if exe:
+            try:
+                st = json.loads(subprocess.run([exe, "status", "--json"], capture_output=True, text=True, timeout=8,
+                                               creationflags=subprocess.CREATE_NO_WINDOW).stdout or "{}")
+                out["running"] = st.get("BackendState") == "Running"
+                dns = (st.get("Self") or {}).get("DNSName", "").rstrip(".")
+                if dns:
+                    out["host"] = dns
+                    if dns != settings.get("remote_host"):
+                        settings.update({"remote_host": dns})
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                pass
+        return out
+
+    def set_autostart(self, on):
+        autostart.set_enabled(bool(on))
+        self._j.store.log("settings", f"Start at sign-in {'on' if on else 'off'}")
+        return autostart.enabled()
 
     def push_to_talk(self):
         j = self._j
@@ -537,31 +640,95 @@ def run_overlay(port, x, y, parent=None):
     webview.start(_round_window)
 
 
+def _pythonw():
+    w = Path(sys.executable).with_name("pythonw.exe")
+    return str(w if w.exists() else sys.executable)
+
+
+def _tailscale():
+    for p in (os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Tailscale", "tailscale.exe"),):
+        if os.path.isfile(p):
+            return p
+    import shutil
+    return shutil.which("tailscale")
+
+
+def _core_running():
+    import win32api
+    import win32event
+    import winerror
+    h = win32event.CreateMutex(None, False, "JarvisAssistantSingleInstance")
+    running = win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS
+    win32api.CloseHandle(h)
+    return running
+
+
+def _wait_for_server(port, seconds=40):
+    import httpx
+    end = time.time() + seconds
+    while time.time() < end:
+        try:
+            if httpx.get(f"http://127.0.0.1:{port}/", timeout=2).status_code == 200:
+                return True
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def run_window(port):
+    """The dashboard window: a client of the background core, starting the core first if needed."""
+    import win32con
+    import win32gui
+    hwnd = win32gui.FindWindow(None, "Jarvis")
+    if hwnd:  # already open: bring it forward
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        try:
+            win32gui.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+        return
+    if not _core_running():
+        subprocess.Popen([_pythonw(), "-W", "ignore", "-m", "jarvis", "--service", "--port", str(port)], cwd=str(ROOT),
+                         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS)
+    if not _wait_for_server(port):
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(0, "Jarvis didn't start. See %LOCALAPPDATA%\\JarvisAssistant\\jarvis.log.", "Jarvis", 0x10)
+        return
+    webview.create_window("Jarvis", f"http://127.0.0.1:{port}/", width=1320, height=840, min_size=(980, 640),
+                          background_color="#090603")
+    webview.start(debug="--debug" in sys.argv)
+
+
 def main():
     import win32api
     import win32event
     import winerror
 
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    port = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else int(settings.get("port") or 8765)
     if "--overlay" in sys.argv:
         i = sys.argv.index("--overlay")
         run_overlay(*(int(a) for a in sys.argv[i + 1:i + 5]))
         return
+    if not ({"--service", "--web"} & set(sys.argv)):  # plain "python -m jarvis" or --window: open the dashboard
+        run_window(port)
+        return
+    # The core: mic, brain, background work and the local server. One per PC.
     mutex = win32event.CreateMutex(None, False, "JarvisAssistantSingleInstance")
     if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
         print("Jarvis is already running.")
+        if "--web" in sys.argv and "--no-browser" not in sys.argv:
+            import webbrowser
+            webbrowser.open(f"http://127.0.0.1:{port}/")
         return
     setup_logging()
-    log.info("starting")
+    log.info("starting core (%s)", "service" if "--service" in sys.argv else "browser")
     j = Jarvis()
     j.api = Api(j)
-    if "--web" in sys.argv:
-        from . import web
-        j.port = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else 8765
-        web.serve(j, j.api, UI.parent, j.port, open_browser="--no-browser" not in sys.argv)
-    else:
-        j.window = webview.create_window("Jarvis", str(UI), js_api=j.api, width=1320, height=840,
-                                         min_size=(980, 640), background_color="#090603")
-        webview.start(j.boot, debug="--debug" in sys.argv)
+    j.port = port
+    from . import web
+    web.serve(j, j.api, UI.parent, port, open_browser="--web" in sys.argv and "--no-browser" not in sys.argv)
     j.show_overlay(False)
     j.speaker.stop()
     if j.listener:

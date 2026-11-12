@@ -52,6 +52,11 @@ It is built to stay light on a mid-range laptop (it was developed on a Ryzen 5 3
 | Weather | Open-Meteo, no key needed |
 | Web research | DuckDuckGo, with sources |
 
+**Background and phone**
+- **Background service:** runs at sign-in with no window, and keeps the laptop awake while plugged in.
+- **Android phone app:** installable, and reaches the laptop privately through Tailscale (pair once with a 6-digit code). From it you can chat, talk, open apps, see a screenshot, list running apps, lock, restart or shut down (with confirmation), and use game mode.
+- **Offline:** if the laptop is asleep, the phone app says so instead of pretending.
+
 **Dashboard**
 - Live orb
 - Conversation, activity log, settings and connections
@@ -90,7 +95,7 @@ setup.bat
 
 | | |
 |---|---|
-| `Jarvis.bat` | Jarvis in its own window |
+| `Jarvis.bat` | the dashboard window (starts the background core if needed) |
 | `Jarvis-Web.bat` | Jarvis with the dashboard in your browser at http://127.0.0.1:8765 |
 | `run_tests.bat` | the test suite (nothing on your PC is opened or closed) |
 
@@ -122,9 +127,11 @@ jarvis/
   listener.py     microphone loop
   providers.py    AI provider list
   config.py       settings and Credential Manager secrets
-  web.py          local browser dashboard server
+  web.py          local server for the dashboard, the orb and the phone (pairing, device keys)
+  power.py        keep-awake while plugged in
+  autostart.py    start at sign-in
   tools/          one module per app or service (spotify, google, github, notion, …)
-ui/               dashboard and floating orb (HTML, CSS, JS)
+ui/               dashboard, floating orb and phone app (mobile.html, service worker)
 tests/            test suite
 ```
 

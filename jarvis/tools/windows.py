@@ -220,3 +220,32 @@ def lock_pc():
     import ctypes
     ctypes.windll.user32.LockWorkStation()
     return "Locking the computer."
+
+
+def power_action(action, delay=30):
+    """Restart or shut down after a countdown, using Windows' own shutdown command. cancel_power() stops it."""
+    flag = {"restart": "/r", "reboot": "/r", "shutdown": "/s", "shut down": "/s"}.get(action.lower().strip())
+    if not flag:
+        return f"I can restart or shut down the laptop, not {action}."
+    verb = "Restarting" if flag == "/r" else "Shutting down"
+    r = subprocess.run(["shutdown", flag, "/t", str(int(delay)), "/c", f"Jarvis: {verb.lower()} in {int(delay)} seconds."],
+                       capture_output=True, text=True, creationflags=CREATE_NO_WINDOW)
+    if r.returncode != 0:
+        return f"Windows refused: {(r.stderr or r.stdout).strip()[:120]}"
+    return f"{verb} the laptop in {int(delay)} seconds. Say cancel shutdown to stop it."
+
+
+def cancel_power():
+    r = subprocess.run(["shutdown", "/a"], capture_output=True, text=True, creationflags=CREATE_NO_WINDOW)
+    return "Cancelled the restart or shutdown." if r.returncode == 0 else "There was no restart or shutdown to cancel."
+
+
+def save_screenshot():
+    """Saves the current screen to Pictures\\Screenshots and returns the path."""
+    import datetime as dt
+    from . import screen
+    folder = Path(os.path.expanduser("~")) / "Pictures" / "Screenshots"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / dt.datetime.now().strftime("Jarvis %Y-%m-%d %H-%M-%S.png")
+    path.write_bytes(screen.capture(max_width=10000))
+    return str(path)

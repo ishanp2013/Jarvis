@@ -254,6 +254,31 @@ How it works: Spotify's official playback API needs Premium plus a developer app
 
 If Spotify's layout changes and Jarvis can't find the button, it says so and leaves the page open for you to press Play.
 
+## 7l. Background running and your phone
+
+**Background core.** Jarvis now runs as a background process: the mic, the AI and the phone connection keep working with no window open.
+- **Start at sign-in:** Settings → Phone and background → *Start Jarvis in the background when I sign in*. This adds a shortcut to your own Startup folder, with no admin rights or system changes.
+- **Opening the dashboard:** `Jarvis.bat` (or double-click the floating orb) opens the dashboard window, and starts the core first if it isn't running.
+- **Stopping Jarvis:** end it in Task Manager (pythonw.exe).
+- **Keep awake:** while plugged in, Jarvis asks Windows not to *idle*-sleep, like a video player does, so background work and phone access keep going. On battery, normal sleep applies. **Closing the lid still sleeps the laptop.** If you want it to stay on with the lid shut, change that yourself: Control Panel → Power Options → *Choose what closing the lid does* → "Do nothing" when plugged in. Jarvis never changes power settings.
+
+**Your phone (Android) through Tailscale.** Tailscale is a free private network between your own devices. Jarvis is never opened to the internet.
+1. Install **Tailscale** on the laptop (tailscale.com/download or the Microsoft Store) and sign in with your **personal** account.
+2. Install **Tailscale** on the phone (Play Store) and sign in with the same account.
+3. On the laptop, open Command Prompt and run once: `tailscale serve --bg 8765`. If it asks you to enable HTTPS, follow the link it prints. This shares Jarvis only with your own Tailscale devices.
+4. In Jarvis: Settings → Phone and background → **Pair a phone**. It shows a 6-digit code and a QR code.
+5. On the phone, open the address it shows (`https://<laptop>.<tailnet>.ts.net`) in Chrome, enter the code, then use **⋮ → Add to Home screen** to make it an app.
+
+The phone keeps its own key, which Settings lists, and you can remove a phone there at any time. A code works once, for 5 minutes.
+
+**On the phone:**
+- Chat or hold the 🎤 button to talk. The laptop's own Whisper transcribes it, and the phone reads replies aloud. Replies to the phone aren't spoken on the laptop.
+- Try "open Opera", "open Google Classroom and leave it running", "open YouTube and search for lo-fi beats", "open Discord and check my class group", "find the presentation I was working on yesterday", "what's running on my laptop", "take a screenshot and show it to me".
+- The **Laptop** tab shows battery, CPU, memory and keep-awake, with buttons for screenshot, running apps, lock and game mode.
+- **Restart** and **Shut down** always ask you to confirm, then wait 30 seconds; **Cancel** stops them. By voice: "restart my laptop", then "yes"; "cancel shutdown".
+- **If the laptop is asleep or off**, the phone app still opens and says *Laptop offline (last seen …)*. Commands can't run until it's back, and Jarvis never pretends they did.
+- **Discord class group:** reading needs the Jarvis bot in that server, which a server admin has to add. Otherwise Jarvis opens Discord and tells you why it can't read it.
+
 ## 8. Safety rules built in
 
 - **Closing apps** and **sending** email, Discord, Slack, Telegram, WhatsApp messages or GitHub issues happen straight away when you ask, as you chose. Turn either back on under Settings → Confirmations.

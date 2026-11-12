@@ -26,6 +26,7 @@ window.onJarvis = (kind, d) => {
     case "approval_done": doneApproval(d); break;
     case "activity": $("#st-activity").textContent = d.text; addActivity({ ts: Date.now() / 1000, kind: "activity", text: d.text }); break;
     case "warning": toast(d.text); break;
+    case "paired": toast(`Paired ${d.name}.`); $("#pair-box").classList.add("hidden"); renderDevices(); break;
     case "game_mode": setGame(d.on);
       if (d.auto) toast(d.on ? `Game mode on${d.game ? " (" + d.game + ")" : ""}: listening paused.` : "Game mode off: listening again.");
       break;
@@ -244,6 +245,7 @@ async function refreshIntegrations(integ) {
   const url = $('[data-service="home"] [data-url]'); if (url && !url.value) url.value = S.home_url || "";
   $("#games-status").textContent = integ.games.count ? `${integ.games.count} games found in Steam and Epic.` : "No Steam or Epic games found.";
   $("#overlay-toggle").checked = integ.overlay.on;
+  $("#autostart-toggle").checked = integ.autostart.on;
   setGame(integ.game_mode.on);
   wakePhrase = integ.wake.phrase; $("#st-wake").textContent = `"${wakePhrase}"`;
   const builtIn = ["hey_jarvis", "alexa", "hey_mycroft", "hey_rhasspy"].includes(integ.wake.model);
@@ -283,6 +285,24 @@ function renderMemories(list) {
   });
 }
 
+async function renderDevices() {
+  const list = await api.devices(), ul = $("#devices"); ul.innerHTML = "";
+  list.forEach((d) => {
+    const li = document.createElement("li");
+    li.textContent = `${d.name} · last used ${new Date(d.last_seen * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`;
+    const b = document.createElement("button"); b.className = "small ghost"; b.textContent = "Remove";
+    b.onclick = async () => { await api.remove_device(d.id); renderDevices(); };
+    li.appendChild(b); ul.appendChild(li);
+  });
+}
+
+async function renderRemote() {
+  const r = await api.remote_status();
+  $("#remote-status").textContent = !r.installed ? "Tailscale not installed" : !r.running ? "Tailscale installed, not signed in"
+    : `Reachable at https://${r.host}`;
+  renderDevices();
+}
+
 function renderRoutines(book) {
   const ul = $("#routines"); ul.innerHTML = "";
   if (!Object.keys(book).length) { ul.innerHTML = "<li class='muted'>No routines yet. Say “when I say focus mode, close Discord and open Notepad”.</li>"; return; }
@@ -301,7 +321,7 @@ function wire() {
     $$(".tabs button").forEach((x) => x.classList.toggle("active", x.dataset.tab === tab));
     $$(".tab").forEach((t) => t.classList.toggle("hidden", t.id !== "tab-" + tab));
     if (tab === "activity") loadActivity();
-    if (tab === "settings") api.routines().then(renderRoutines);
+    if (tab === "settings") { api.routines().then(renderRoutines); renderRemote(); }
   }));
   $("#btn-mic").onclick = async () => setMic(await api.set_mic(!micOn));
   $("#btn-talk").onclick = async () => { const r = await api.push_to_talk(); if (r !== "ok") toast(r); };
@@ -380,6 +400,17 @@ function wire() {
     };
     card.querySelector("[data-disconnect]").onclick = async () => refreshIntegrations(await api.disconnect_service(name));
   });
+  $("#autostart-toggle").onchange = async (e) => { e.target.checked = await api.set_autostart(e.target.checked); };
+  $("#pair-start").onclick = async () => {
+    const r = await api.pair_start();
+    $("#pair-box").classList.remove("hidden");
+    $("#pair-code-show").textContent = r.code;
+    $("#pair-qr").innerHTML = r.qr || "";  // SVG made locally by Jarvis from its own address
+    $("#pair-info").textContent = r.url ? `On your phone, open ${r.url} and enter the code (or scan the QR code).`
+      : "Set up Tailscale first so your phone can reach this laptop. You can still test pairing at http://127.0.0.1:8765/m here.";
+    clearTimeout(window.pairTimer);
+    window.pairTimer = setTimeout(() => $("#pair-box").classList.add("hidden"), 5 * 60 * 1000);
+  };
   $("#chip-game").onclick = async () => { toast(await api.game_mode(!window.gameMode)); refreshIntegrations(); };
   $("#overlay-toggle").onchange = async (e) => { e.target.checked = await api.set_overlay(e.target.checked); };
   $("#wake-model").onchange = (e) => $("#wake-custom").classList.toggle("hidden", e.target.value !== "custom");
@@ -421,8 +452,13 @@ window.addEventListener("online", () => { $("#chip-net").className = "chip on"; 
 window.addEventListener("offline", () => { $("#chip-net").className = "chip off"; $("#chip-net").textContent = "Offline"; });
 
 // ------------------------------------------------------------ boot
+let booted = false;
 window.addEventListener("pywebviewready", async () => {
-  api = window.pywebview.api;
+  // The dashboard is served by the background core; web-bridge.js provides window.jarvisApi. In the desktop
+  // window pywebview also announces itself, so only start once and keep using Jarvis's own API.
+  if (booted) return;
+  booted = true;
+  api = window.jarvisApi || window.pywebview.api;
   const init = await api.init();
   S = init.settings;
   const ev = $("#edge-voices");

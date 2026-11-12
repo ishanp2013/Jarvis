@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#090603">
+<title>Jarvis</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="mobile.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot" id="dot"></span>J.A.R.V.I.S</div>
+  <div class="status" id="status">Connecting…</div>
+</header>
+
+<!-- shown until this phone is paired -->
+<section id="pair" class="screen hidden">
+  <canvas id="pair-orb" width="300" height="300"></canvas>
+  <h1>Pair this phone</h1>
+  <p>On the laptop, open Jarvis → Settings → Phone → <b>Pair a phone</b>, then type the 6-digit code here (or scan the QR code).</p>
+  <form id="pair-form" autocomplete="off">
+    <input id="pair-code" inputmode="numeric" maxlength="6" placeholder="123456" aria-label="Pairing code">
+    <input id="pair-name" maxlength="40" placeholder="Name for this phone" aria-label="Phone name">
+    <button>Pair</button>
+  </form>
+  <p class="err" id="pair-err"></p>
+</section>
+
+<!-- shown when the laptop can't be reached -->
+<div id="offline" class="banner hidden">Laptop offline <span id="last-seen"></span>. It may be asleep, switched off or not on Tailscale. Commands can't reach it until it's back.</div>
+
+<main id="app" class="hidden">
+  <section id="tab-chat" class="tab">
+    <div id="chat"></div>
+    <div id="approvals"></div>
+    <form id="ask" autocomplete="off">
+      <button type="button" id="mic" class="round" aria-label="Hold to talk">🎤</button>
+      <input id="ask-input" placeholder="Ask Jarvis…" maxlength="2000">
+      <button class="send" aria-label="Send">➤</button>
+    </form>
+  </section>
+
+  <section id="tab-laptop" class="tab hidden">
+    <div class="card" id="laptop-card">
+      <h2 id="lp-name">Laptop</h2>
+      <div class="grid">
+        <div><span>Battery</span><b id="lp-battery">-</b></div>
+        <div><span>CPU</span><b id="lp-cpu">-</b></div>
+        <div><span>Memory</span><b id="lp-ram">-</b></div>
+        <div><span>Awake</span><b id="lp-awake">-</b></div>
+        <div><span>Jarvis</span><b id="lp-state">-</b></div>
+        <div><span>Up for</span><b id="lp-uptime">-</b></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Quick open</h2>
+      <div class="buttons" id="quick-open">
+        <button data-cmd="open opera gx">Opera</button>
+        <button data-cmd="open google classroom">Classroom</button>
+        <button data-cmd="open youtube">YouTube</button>
+        <button data-cmd="open discord">Discord</button>
+        <button data-cmd="open spotify">Spotify</button>
+        <button data-cmd="play my liked songs">Liked songs</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Control</h2>
+      <div class="buttons">
+        <button id="btn-shot">Screenshot</button>
+        <button id="btn-apps">What's running</button>
+        <button id="btn-lock">Lock</button>
+        <button id="btn-game">Game mode</button>
+        <button id="btn-restart" class="warn">Restart</button>
+        <button id="btn-shutdown" class="warn">Shut down</button>
+        <button id="btn-cancel">Cancel restart/shutdown</button>
+      </div>
+      <div id="lp-out"></div>
+    </div>
+  </section>
+</main>
+
+<nav id="tabs" class="hidden">
+  <button data-tab="chat" class="active">Chat</button>
+  <button data-tab="laptop">Laptop</button>
+</nav>
+<div id="toast" class="hidden"></div>
+<!--bridge-->
+<script src="orb.js"></script>
+<script src="mobile.js"></script>
+</body>
+</html>

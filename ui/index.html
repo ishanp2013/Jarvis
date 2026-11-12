@@ -193,6 +193,17 @@
       <label class="check"><input type="checkbox" data-set="private_mode"> Private mode: keep email, calendar, tasks and Discord away from cloud AI</label>
       <p class="muted">With private mode on, Jarvis still reads and lists those for you, but summaries and drafting of them need a model on this PC (Ollama or LM Studio) or private mode off. Free tiers (Gemini, Groq, Mistral, OpenRouter's free models) may use what you send to improve their products.</p>
 
+      <h3>Phone and background</h3>
+      <label class="check"><input type="checkbox" id="autostart-toggle"> Start Jarvis in the background when I sign in to Windows</label>
+      <label class="check"><input type="checkbox" data-set="keep_awake_on_ac"> Keep the laptop awake while it's plugged in (so background work and the phone keep working; closing the lid still sleeps it)</label>
+      <div class="card">
+        <div class="row"><b>Phone access</b><span id="remote-status" class="muted">checking…</span></div>
+        <p class="muted">Your phone reaches Jarvis through Tailscale, a free private network: install it on this laptop and your phone with the same account, then run <code>tailscale serve --bg 8765</code> once on the laptop (SETUP.md has the steps).</p>
+        <div class="row"><span class="muted" id="pair-info"></span><button class="small" id="pair-start">Pair a phone</button></div>
+        <div id="pair-box" class="hidden"><div id="pair-qr"></div><p>Code: <b id="pair-code-show"></b> <span class="muted">(works once, for 5 minutes)</span></p></div>
+        <ul id="devices"></ul>
+      </div>
+
       <h3>Desktop</h3>
       <label>Browser path (Opera GX) <input data-set="browser_path"></label>
       <label class="check"><input type="checkbox" id="overlay-toggle"> Floating orb: a small always-on-top Jarvis (click to talk, double-click to open this window, drag to move)</label>

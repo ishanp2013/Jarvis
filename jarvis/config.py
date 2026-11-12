@@ -61,6 +61,10 @@ DEFAULTS = {
     "history_turns": 8,
     "stream_replies": True,          # start speaking while the AI is still writing its answer
     "vision_model": "",              # model for "what's on my screen"; empty = the chat model (OpenRouter picks a free one)
+    # background core and remote access
+    "port": 8765,                    # local server for the dashboard, the orb and the phone
+    "keep_awake_on_ac": True,        # stop idle sleep while plugged in, so background work and the phone keep working
+    "remote_host": "",               # this laptop's Tailscale name, e.g. laptop.tail1234.ts.net (filled in automatically)
     # desktop extras
     "game_mode_auto": True,          # pause wake-word listening while a game is in the foreground
     "overlay_enabled": False,        # small always-on-top orb

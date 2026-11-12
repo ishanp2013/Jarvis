@@ -661,5 +661,158 @@ class NewSafetyTests(unittest.TestCase):
             self.assertEqual(saved["notion_token"], "good")
 
 
+class PhoneAccessTests(unittest.TestCase):
+    """The phone reaches Jarvis through Tailscale: it must pair first, then may only use the phone methods."""
+
+    def setUp(self):
+        import http.client
+        from http.server import ThreadingHTTPServer
+        from jarvis import web
+
+        class FakeApi:
+            calls = []
+
+            def send_text(self, text, source="text"):
+                self.calls.append((text, source))
+                return "ok"
+
+            def init(self):
+                return {"ok": True}
+
+            def set_secret(self, name, value):
+                self.calls.append(("set_secret", name))
+                return {}
+
+        self.web, self.api = web, FakeApi()
+        self.store = Store(Path(tempfile.mkdtemp()) / "t.db")
+        self.pairing = web.Pairing()
+        ui = Path(__file__).resolve().parent.parent / "ui"
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), None)
+        self.port = self.srv.server_address[1]
+        self.srv.RequestHandlerClass = web.make_handler(self.api, ui.resolve(), self.port, web.Hub(), self.store, self.pairing)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.addCleanup(self.srv.server_close)
+        self.addCleanup(self.srv.shutdown)
+        values = {"remote_host": "laptop.tail123.ts.net"}
+        p = mock.patch.object(settings, "get", lambda k, d=None: values.get(k, settings._data.get(k, d)))
+        p.start()
+        self.addCleanup(p.stop)
+
+        def req(method, path, body=None, headers=None, remote=True):
+            c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+            h = {"Host": "laptop.tail123.ts.net", "X-Forwarded-For": "100.64.0.2", "X-Forwarded-Proto": "https"} if remote \
+                else {"Host": f"127.0.0.1:{self.port}"}
+            c.request(method, path, body, {**h, **(headers or {})})
+            r = c.getresponse()
+            return r.status, r.read(), r.getheader("Set-Cookie") or ""
+        self.req = req
+
+    def test_unpaired_phone_gets_only_the_app_shell(self):
+        status, page, _ = self.req("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertIn(b"Pair this phone", page)
+        self.assertNotIn(self.web.TOKEN.encode(), page)  # the laptop's own token never goes to the phone
+        self.assertEqual(self.req("GET", "/index.html")[0], 403)
+        self.assertEqual(self.req("GET", "/events")[0], 403)
+        self.assertEqual(self.req("POST", "/api/init", b"[]")[0], 403)
+        # the laptop's per-run token doesn't work from outside either
+        self.assertEqual(self.req("POST", "/api/init", b"[]", {"X-Jarvis-Token": self.web.TOKEN})[0], 403)
+        self.assertEqual(self.req("GET", "/", headers={"Host": "evil.example"})[0], 403)
+
+    def test_pairing_then_phone_methods_only(self):
+        self.assertEqual(self.req("POST", "/pair", b'{"code": "000000"}')[0], 403)  # no code started
+        code = self.pairing.start()
+        status, body, cookie = self.req("POST", "/pair", json_body({"code": code, "name": "Test phone"}))
+        self.assertEqual(status, 200)
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("Secure", cookie)
+        token_pair = cookie.split(";")[0]
+        self.assertEqual(self.req("POST", "/pair", json_body({"code": code}))[0], 403)  # codes work once
+        h = {"Cookie": token_pair}
+        self.assertEqual(self.req("POST", "/api/init", b"[]", h)[:2], (200, b'{"ok": true}'))
+        self.req("POST", "/api/send_text", b'["open opera"]', h)
+        self.assertEqual(self.api.calls[-1], ("open opera", "phone"))  # replies to the phone stay on the phone
+        self.assertEqual(self.req("POST", "/api/set_secret", b'["x", "y"]', h)[0], 403)  # not a phone method
+        self.assertEqual(self.req("GET", "/index.html", headers=h)[0], 200)
+        # the stored key is a hash, and removing the device locks the phone out
+        dev = self.store.devices()[0]
+        raw = self.store._query("SELECT token_hash FROM devices")[0][0]
+        self.assertNotIn(raw, token_pair)
+        self.store.remove_device(dev["id"])
+        self.assertEqual(self.req("POST", "/api/init", b"[]", h)[0], 403)
+
+    def test_local_dashboard_still_uses_its_token(self):
+        status, page, _ = self.req("GET", "/", remote=False)
+        self.assertIn(self.web.TOKEN.encode(), page)
+        self.assertEqual(self.req("POST", "/api/set_secret", b'["x", "y"]', {"X-Jarvis-Token": self.web.TOKEN}, remote=False)[0], 200)
+
+
+def json_body(d):
+    import json
+    return json.dumps(d).encode()
+
+
+class LaptopFromPhoneTests(RouterBase):
+    def test_power_needs_approval_and_can_be_cancelled(self):
+        with mock.patch.object(win, "power_action", lambda a, d=30: self.calls.append(("power", a)) or "Restarting."), \
+                mock.patch.object(win, "cancel_power", lambda: "Cancelled the restart or shutdown."):
+            self.assertIn("Say yes", self.ask("restart my laptop"))
+            self.assertNotIn(("power", "restart"), self.calls)  # nothing happens before approval
+            self.ask("yes")
+            self.assertIn(("power", "restart"), self.calls)
+            self.assertIn("Cancelled", self.ask("cancel shutdown"))
+            self.assertIn("Shut down the laptop?", self.ask("shut down my laptop"))
+
+    def test_screenshot_goes_to_the_phone(self):
+        from jarvis.tools import screen
+        with mock.patch.object(screen, "capture", lambda max_width=1600, region=None: b"PNGDATA"):
+            self.brain.handle("take a screenshot of my laptop and show it to me", "phone")
+        img = [d for k, d in self.events if k == "image"]
+        self.assertTrue(img and img[0]["data"].startswith("data:image/png;base64,"))
+
+    def test_phone_phrasing(self):
+        self.ask("open google classroom and leave it running on my laptop")
+        self.assertEqual(self.calls[-1], ("open_url", ("https://classroom.google.com",)))
+        with mock.patch.object(win, "running_apps", lambda: [{"app": "Opera GX"}, {"app": "Discord"}]):
+            self.assertIn("Opera GX", self.ask("tell me what's currently running on my laptop"))
+        self.ask("open opera on my laptop")
+        self.assertEqual(self.calls[-1], ("open_app", ("opera",)))
+
+    def test_discord_class_group_needs_the_bot(self):
+        from jarvis.tools import discord
+        with mock.patch.object(discord, "connected", lambda: False):
+            self.assertIn("bot", self.ask("open discord and check my class group"))
+        self.assertEqual(self.calls[-1], ("open_app", ("discord",)))
+        with mock.patch.object(discord, "connected", lambda: True), \
+                mock.patch.object(discord, "selected_channels", lambda: ["general", "class-10b"]), \
+                mock.patch.object(discord, "read_channel", lambda n, k=20: {"messages": [{"author": "Ms Rao", "text": "Test on Friday"}]}):
+            self.assertIn("Test on Friday", self.ask("check my class group on discord"))
+
+    def test_recent_files_phrase(self):
+        from jarvis.tools import files
+        self.assertEqual(files.parse("find the presentation i was working on yesterday"), "the presentation i was working on yesterday")
+        self.assertIsNotNone(files._since("the presentation i was working on yesterday"))
+        self.assertIsNone(files._since("my tokyo notes"))
+
+
+class BackgroundTests(unittest.TestCase):
+    def test_autostart_shortcut(self):
+        from jarvis import autostart
+        tmp = Path(tempfile.mkdtemp()) / "Jarvis.lnk"
+        with mock.patch.object(autostart, "SHORTCUT", tmp):
+            self.assertFalse(autostart.enabled())
+            autostart.enable()
+            self.assertTrue(tmp.exists())
+            autostart.disable()
+            self.assertFalse(tmp.exists())
+
+    def test_keep_awake_only_when_plugged_in(self):
+        from jarvis import power
+        with mock.patch.object(power.psutil, "sensors_battery", lambda: mock.Mock(percent=80, power_plugged=False)):
+            self.assertFalse(power.plugged_in())
+        with mock.patch.object(power.psutil, "sensors_battery", lambda: None):
+            self.assertTrue(power.plugged_in())  # a desktop PC
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

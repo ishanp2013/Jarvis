@@ -16,3 +16,4 @@ ddgs>=9
 beautifulsoup4>=4.12
 charset_normalizer>=3
 anthropic>=2.8
+segno>=1.6

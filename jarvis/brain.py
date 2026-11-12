@@ -369,6 +369,12 @@ def t_home_control(device, action, value=None):
     return home.control(device, action, value)
 
 
+@tool("power_laptop", "Restart or shut down the laptop after a 30-second countdown (the user confirms first)",
+      {"action": ("string", "restart|shutdown")}, ["action"], approval="voice")
+def t_power(action):
+    return win.power_action(action, 30)
+
+
 @tool("game_mode", "Turn game mode on or off (pauses listening for the wake word to keep games smooth)",
       {"on": ("boolean", "true = on")}, ["on"])
 def t_game_mode(on):
@@ -386,6 +392,12 @@ SCREEN_RE = re.compile(r"^(?:what(?:'s| is) (?:on|showing on) (?:my |the )?scree
                        r"|what am i looking at|can you see (?:this|my screen)|(?:explain|read|describe|summari[sz]e|translate|"
                        r"fix|solve|what(?:'s| is| does)) (?:this|the|my) (?:error|screen|window|page|message|code|question|chart"
                        r"|problem|image)(?: (?:mean|say|on (?:my |the )?screen))?)(.*)$")
+# Web apps that "open X" should open in the browser rather than look for an installed program.
+SITES = {"google classroom": "https://classroom.google.com", "classroom": "https://classroom.google.com",
+         "gmail": "https://mail.google.com", "google drive": "https://drive.google.com", "drive": "https://drive.google.com",
+         "google docs": "https://docs.google.com", "google slides": "https://slides.google.com",
+         "google calendar": "https://calendar.google.com", "chatgpt": "https://chatgpt.com",
+         "whatsapp web": "https://web.whatsapp.com", "google meet": "https://meet.google.com"}
 CLIP_RE = re.compile(r"^(summari[sz]e|translate|explain|fix|proofread|rewrite|shorten|improve|reply to|answer|check|"
                      r"correct|simplify)(.*?) (?:what i(?:'ve)? (?:just )?copied|my clipboard|the clipboard|the copied text|"
                      r"what's (?:in|on) my clipboard)(.*)$")
@@ -415,6 +427,7 @@ class Brain:
         self.lock = threading.Lock()
         self.cancel_gen = 0
         self._live = None           # while streaming: receives the AI's reply text as it's written
+        self.source = "text"        # where the current request came from: voice, text (dashboard) or phone
         self.set_game_mode = None   # set by the app: callable(on: bool) -> str
 
     # ---------------- approvals
@@ -426,7 +439,7 @@ class Brain:
                  "calendar_add": "Add calendar event", "discord_post": "Post to Discord",
                  "press_risky_button": "Press a button", "whatsapp_send": "Send WhatsApp message",
                  "github_create_issue": "Open GitHub issue", "slack_post": "Post to Slack",
-                 "telegram_send": "Send Telegram message"}.get(name, name)
+                 "telegram_send": "Send Telegram message", "power_laptop": "Restart or shut down the laptop"}.get(name, name)
         if name == "email_reply":
             try:
                 orig = mail().read_mail(args["id"])
@@ -475,6 +488,7 @@ class Brain:
             return
         self.cancel_gen += 1
         gen = self.cancel_gen
+        self.source = source
         self.request = text  # the user's own words: what may trigger an unconfirmed send
         self.store.add_message("user", text)
         self.emit("message", {"role": "user", "text": text})
@@ -601,6 +615,38 @@ class Brain:
             settings.update({"mic_enabled": False})
             self.store.log("privacy", "Microphone disabled by voice")
             return "Microphone off. Use the mic button to turn me back on."
+        # From the phone, "on my laptop" just names the device Jarvis already runs on.
+        t = re.sub(r"\s*\b(?:on|from|in) (?:my |the )?(?:laptop|computer|pc)\b", "", t).strip()
+        t = re.sub(r"^(?:can you |could you |would you |please )", "", t)
+        t = re.sub(r"^(?:tell me|show me|let me know|check) (?=(?:what|who|how|which|if|whether)\b)", "", t)
+        t = re.sub(r"\b(?:currently|right now) ?", "", t).strip()
+        t = re.sub(r",? and (?:leave|keep) it (?:running|open)$", "", t)
+        # restart / shut down: always asks first, then a 30-second countdown that "cancel shutdown" stops
+        if r := m(r"^(restart|reboot|shut ?down|power off|switch off|turn off)(?: my| the)?(?: laptop| computer| pc)$") \
+                or m(r"^(restart|reboot|shut ?down)$"):
+            action = "restart" if r.group(1) in ("restart", "reboot") else "shutdown"
+            self._request_approval("power_laptop", {"action": action})
+            return f"{'Restart' if action == 'restart' else 'Shut down'} the laptop? Say yes or press approve. " \
+                   "Anything unsaved will be lost."
+        if m(r"^(?:cancel|stop|abort) (?:the )?(?:shutdown|shut down|restart|reboot)$"):
+            return win.cancel_power()
+        # screenshots: shown on the phone when asked from the phone, otherwise saved to Pictures
+        if m(r"^(?:take|grab|capture|send me|show me|get)(?: me)? (?:a )?screen ?shot(?: of (?:my |the )?(?:screen|laptop|computer|pc|desktop))?"
+             r"(?:,? and (?:show|send) (?:it )?(?:to )?me)?$") or m(r"^screen ?shot$"):
+            if self.source == "phone":
+                import base64
+                data = "data:image/png;base64," + base64.b64encode(screen.capture(max_width=1280)).decode()
+                self.emit("image", {"data": data, "caption": "Laptop screen"})
+                self.store.log("remote", "Screenshot sent to the phone")
+                return "Here's your laptop screen."
+            win.save_screenshot()
+            return "Screenshot saved in your Pictures, Screenshots folder."
+        # "open discord and check my class group"
+        if (r := m(r"^(?:open discord and )?(?:check|read|show me|what'?s new in|catch me up on) (?:my |the )?(.+?) "
+                   r"(?:group|channel|server|chat|gc)(?: on discord)?$")) and "discord" in t:
+            if t.startswith("open discord"):
+                win.open_app("discord")
+            return self._discord_group(r.group(1))
         # routines: "when I say focus mode, close discord and open notepad"
         if name := routines.match(t):
             return self._run_routine(name)
@@ -683,6 +729,9 @@ class Brain:
                 return f"Opening {target}."
             if target in ("my email", "my emails", "email", "mail", "my inbox"):
                 target = "outlook"
+            if site := SITES.get(target):
+                win.open_url(site)
+                return f"Opening {target.title()}."
             return win.open_app(target)
         if r := m(r"^(?:close|quit|exit|kill) (?:the )?(.+?)(?: app| please)?$"):
             hits = win.close_target(r.group(1))
@@ -759,6 +808,21 @@ class Brain:
         if self._llm_available():
             return None
         return self._offline_fallback(t)
+
+    def _discord_group(self, name):
+        """Latest messages in the selected Discord channel that best matches 'class', 'maths group' and so on."""
+        if not discord.connected():
+            return ("Opened Discord. I can only read a Discord group for you if your Jarvis bot is in that server "
+                    "(a server admin has to add it). Set it up under Connections, Discord.")
+        chans = discord.selected_channels()
+        words = set(re.findall(r"\w+", name.lower())) - {"my", "the"}
+        best = max(chans, key=lambda c: len(words & set(re.findall(r"[a-z0-9]+", c.lower()))), default=None)
+        if not best or not words & set(re.findall(r"[a-z0-9]+", best.lower())):
+            return f"None of the Discord channels I can read matches {name}. I can read: {', '.join(chans) or 'none yet'}."
+        msgs = discord.read_channel(best, 6)["messages"]
+        if not msgs:
+            return f"Nothing new in #{best}."
+        return f"Latest in #{best}: " + " ".join(f"{x['author']}: {x['text'][:160]}." for x in msgs[-4:])
 
     def _private_cloud(self):
         return settings["private_mode"] and providers.is_cloud()

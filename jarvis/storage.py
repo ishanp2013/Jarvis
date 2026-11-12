@@ -55,9 +55,40 @@ class Store:
             CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY, ts REAL, role TEXT, text TEXT);
             CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY, ts REAL, text TEXT UNIQUE);
             CREATE TABLE IF NOT EXISTS activity(id INTEGER PRIMARY KEY, ts REAL, kind TEXT, text TEXT);
+            CREATE TABLE IF NOT EXISTS devices(id INTEGER PRIMARY KEY, name TEXT, token_hash TEXT UNIQUE,
+                                               created REAL, last_seen REAL);
             """
         )
         self._db.commit()
+
+    # paired phones: only a hash of each device's token is stored
+    @staticmethod
+    def _hash(token):
+        import hashlib
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    def add_device(self, name, token):
+        now = time.time()
+        cur = self._exec("INSERT INTO devices(name, token_hash, created, last_seen) VALUES(?,?,?,?)",
+                         (name[:60], self._hash(token), now, now))
+        return cur.lastrowid
+
+    def device_for(self, token):
+        """The paired device with this token (and marks it as seen), or None."""
+        if not token:
+            return None
+        rows = self._query("SELECT id, name FROM devices WHERE token_hash=?", (self._hash(token),))
+        if not rows:
+            return None
+        self._exec("UPDATE devices SET last_seen=? WHERE id=?", (time.time(), rows[0][0]))
+        return {"id": rows[0][0], "name": rows[0][1]}
+
+    def devices(self):
+        return [{"id": r[0], "name": r[1], "created": r[2], "last_seen": r[3]}
+                for r in self._query("SELECT id, name, created, last_seen FROM devices ORDER BY id")]
+
+    def remove_device(self, dev_id):
+        self._exec("DELETE FROM devices WHERE id=?", (int(dev_id),))
 
     def _exec(self, sql, args=()):
         with self._lock:
