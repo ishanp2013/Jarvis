@@ -57,6 +57,7 @@ class Jarvis:
         self.worker = Worker(self.store, self.notify)
         self.agent = Agent(self.store, self.notify, self._reply_card, self._agent_paused, self._auto_prepare)
         self.brain.worker = self.worker
+        self.brain.briefing_fn = lambda: self.give_briefing("asked", speak=False)["spoken"]  # the brain speaks it
         self.brain.agent = self.agent
         brain_module._AGENT[0] = self.agent  # for the AI's task tools
         brain_module._WORKER[0] = self.worker
@@ -97,6 +98,53 @@ class Jarvis:
                 phone.ping("Jarvis: " + text)
         except Exception:
             pass
+
+    # ---------- the welcome-back briefing
+    def briefing(self, since=None):
+        from .agent import briefing as brief
+        from .brain import calendar as cal
+        if since is None:
+            last = settings.get("last_briefing") or 0
+            since = last if time.time() - last < 24 * 3600 else time.time() - 24 * 3600
+        def events():  # the calendar is slow to ask; five minutes old is fresh enough
+            cache = getattr(self, "_cal_cache", (0, None))
+            if time.time() - cache[0] > 300:
+                self._cal_cache = cache = (time.time(), cal().events(2))
+            return cache[1]
+        return brief.compose(self.store, self.agent, self.worker, since=since, pending=len(self.brain.pending),
+                             calendar=events)
+
+    def give_briefing(self, reason="asked", speak=True):
+        b = self.briefing()
+        settings.update({"last_briefing": time.time()})
+        self.emit("briefing", b)
+        self.store.log("briefing", f"Briefing ({reason}): {b['spoken'][:300]}")
+        if reason != "asked" and b["empty"]:
+            return b  # came back to nothing new: show it, but don't talk
+        if speak and settings.get("briefing_speak", True) and not self.game_mode and not _quiet_hours():
+            self.emit("state", {"state": "speaking"})
+            self.speaker.say(self.brain._address(b["spoken"]))
+        return b
+
+    def _watch_presence(self):
+        """Notices when you come back (no keyboard or mouse for a while, then activity) and briefs you."""
+        time.sleep(90)  # after starting up, give a briefing once things have settled
+        if settings.get("briefing_enabled", True) and time.time() - (settings.get("last_briefing") or 0) > 3 * 3600:
+            if _idle_seconds() < 120:
+                self.give_briefing("startup")
+        away = False
+        while True:
+            time.sleep(10)
+            try:
+                idle = _idle_seconds()
+                if idle >= int(settings.get("briefing_away_min") or 30) * 60:
+                    away = True
+                elif away and idle < 15:
+                    away = False
+                    if settings.get("briefing_enabled", True):
+                        self.give_briefing("returned")
+            except Exception:
+                log.exception("presence")
 
     def _auto_prepare(self, task):
         if settings.get("agent_auto_prepare", True) and task:
@@ -201,6 +249,7 @@ class Jarvis:
             "power", "Keeping the laptop awake while plugged in" if on else "Normal sleep allowed (on battery or setting off)"))
         self.agent.start()
         self.worker.start()
+        threading.Thread(target=self._watch_presence, daemon=True, name="presence").start()
         threading.Thread(target=self._monitor, daemon=True).start()
 
     def _monitor(self):
@@ -365,6 +414,19 @@ class Api:
 
     def agent_status(self):
         return self._j.agent.status()
+
+    # ---------- Today view and briefings
+    def today(self):
+        j = self._j
+        b = j.briefing()
+        return {"briefing": b, "status": self.laptop_status(), "phone": self._phone_info(),
+                "approvals": list(j.brain.pending.values()),
+                "activity": [a for a in j.store.activity(80) if a["kind"] in ("agent", "notify", "task", "remote", "briefing")][:12],
+                "agent": j.agent.status()}
+
+    def brief_me(self, source="text"):
+        """A briefing now: spoken on the laptop when asked there, or returned for the phone to read out."""
+        return self._j.give_briefing("asked", speak=source != "phone")["spoken"]
 
     # ---------- prepared work
     def jobs(self):
@@ -742,16 +804,21 @@ class Api:
             win.open_url(url)
 
 
-def _user_present(seconds=120):
-    """True if someone used the keyboard or mouse in the last two minutes."""
+def _idle_seconds():
+    """Seconds since the last keyboard or mouse input on this PC."""
     import ctypes
 
     class LASTINPUTINFO(ctypes.Structure):
         _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
     li = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
     if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(li)):
-        return False
-    return (ctypes.windll.kernel32.GetTickCount() - li.dwTime) / 1000 < seconds
+        return 0
+    return ((ctypes.windll.kernel32.GetTickCount() - li.dwTime) & 0xFFFFFFFF) / 1000
+
+
+def _user_present(seconds=120):
+    """True if someone used the keyboard or mouse in the last two minutes."""
+    return _idle_seconds() < seconds
 
 
 def _quiet_hours(now=None):

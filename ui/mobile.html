@@ -32,7 +32,18 @@
 <div id="offline" class="banner hidden">Laptop offline <span id="last-seen"></span>. It may be asleep, switched off or not on Tailscale. Commands can't reach it until it's back.</div>
 
 <main id="app" class="hidden">
-  <section id="tab-chat" class="tab">
+  <section id="tab-today" class="tab">
+    <div class="card">
+      <h2>Briefing</h2>
+      <p id="td-brief">Loading…</p>
+      <div class="buttons"><button id="td-read">Read it to me</button><button id="td-refresh">Brief me now</button></div>
+    </div>
+    <div class="card"><h2>Coming up</h2><ul id="td-tasks" class="tasks"></ul></div>
+    <div class="card"><h2>Jarvis did</h2><ul id="td-agent" class="tasks"></ul></div>
+    <div class="card"><h2>Schedule</h2><ul id="td-schedule" class="tasks"></ul></div>
+  </section>
+
+  <section id="tab-chat" class="tab hidden">
     <div id="chat"></div>
     <div id="approvals"></div>
     <form id="ask" autocomplete="off">
@@ -103,7 +114,8 @@
 </main>
 
 <nav id="tabs" class="hidden">
-  <button data-tab="chat" class="active">Chat</button>
+  <button data-tab="today" class="active">Today</button>
+  <button data-tab="chat">Chat</button>
   <button data-tab="tasks">Tasks</button>
   <button data-tab="laptop">Laptop</button>
 </nav>

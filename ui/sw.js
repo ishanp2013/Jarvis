@@ -1,6 +1,6 @@
 // Keeps the phone app's own files on the phone, so it still opens (and says "laptop offline")
 // when the laptop is asleep. Jarvis's answers and data are never cached.
-const CACHE = "jarvis-shell-v3";
+const CACHE = "jarvis-shell-v4";
 const SHELL = ["/m", "/mobile.css", "/mobile.js", "/orb.js", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (e) => {

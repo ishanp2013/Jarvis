@@ -138,3 +138,18 @@ body { overflow-x: hidden; }
 .tasks li span { display: flex; gap: 6px; flex: none; }
 label textarea { width: 100%; color: var(--text); font-size: 13px; resize: vertical; }
 .err { color: var(--danger); }
+
+/* Today */
+.brief { padding: 4px 2px 10px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.brief p { font-size: 14.5px; line-height: 1.5; margin: 6px 0; }
+.today-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.today-grid .card { margin: 0; min-width: 0; }
+.today-grid h3 { margin: 0 0 6px; }
+ul.mini { list-style: none; padding: 0; margin: 0 0 6px; font-size: 12.5px; }
+ul.mini li { padding: 3px 0; border-bottom: 1px dashed rgba(255, 255, 255, .05); overflow-wrap: anywhere; }
+ul.mini li.urgent { color: var(--danger); }
+ul.mini li.soon { color: var(--warn); }
+ul.mini li .muted { font-size: 11.5px; }
+ul.mini li button { margin-left: 6px; }
+.quick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+@media (max-width: 1150px) { .today-grid { grid-template-columns: minmax(0, 1fr); } }

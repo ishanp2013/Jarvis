@@ -158,6 +158,40 @@ async function startRec() {
 }
 function stopRec() { if (rec && rec.state === "recording") rec.stop(); }
 
+// ------------------------------------------------------------ today tab
+function rows(sel, items, empty) {
+  const ul = $(sel); ul.innerHTML = "";
+  (items.length ? items : [{ text: empty }]).forEach((x) => {
+    const li = document.createElement("li"); const d = document.createElement("div");
+    const b = document.createElement("b"); b.textContent = x.text; d.appendChild(b);
+    if (x.sub) { const s = document.createElement("small"); s.textContent = x.sub; d.appendChild(s); }
+    li.className = x.cls || ""; li.appendChild(d);
+    if (x.button) li.appendChild(x.button);
+    ul.appendChild(li);
+  });
+}
+
+async function loadToday() {
+  try {
+    const d = await call("today"), s = d.briefing.sections;
+    $("#td-brief").textContent = d.briefing.spoken;
+    const cls = (x) => x.due.startsWith("overdue") || x.due === "today" ? "urgent" : x.due === "tomorrow" ? "soon" : "";
+    rows("#td-tasks", [...s.tasks.overdue, ...s.tasks.top.filter((x) => !s.tasks.overdue.some((o) => o.id === x.id))].slice(0, 6)
+      .map((x) => ({ text: x.title, sub: "due " + x.due, cls: cls(x) })), "Nothing open.");
+    const files = s.agent.files.map((f) => {
+      const o = document.createElement("button"); o.textContent = "Open on laptop";
+      o.onclick = async () => { try { toast(await call("open_result", f.id)); } catch (e) { toast(e.message); } };
+      return { text: "Prepared " + f.title, sub: f.file, button: o };
+    });
+    rows("#td-agent", [...files,
+      ...(s.agent.approvals ? [{ text: `${s.agent.approvals} waiting for your approval`, sub: "see the Chat tab", cls: "soon" }] : []),
+      ...s.agent.failed.map((x) => ({ text: "Couldn't finish " + x, cls: "urgent" })),
+      { text: `${s.agent.checks} checks, ${s.messages.school} school items`, sub: `${s.messages.emails} emails, ${s.messages.messages} messages` }], "");
+    rows("#td-schedule", [...s.schedule.today.map((e) => ({ text: e.subject, sub: "today " + e.time })),
+      ...s.schedule.tomorrow.map((e) => ({ text: e.subject, sub: "tomorrow " + e.time }))], "Nothing on your calendar.");
+  } catch (e) { if (!(e instanceof Offline) && !(e instanceof NotPaired)) toast(e.message); }
+}
+
 // ------------------------------------------------------------ tasks tab
 function renderTasks(list) {
   const ul = $("#tasks"); ul.innerHTML = "";
@@ -278,6 +312,7 @@ async function start() {
     init.pending.forEach(showApproval);
     state = init.state;
     listen();
+    loadToday();
   } catch (e) {
     if (e instanceof Offline) { $("#app").classList.remove("hidden"); $("#tabs").classList.remove("hidden"); setTimeout(start, 10000); }
   }
@@ -290,7 +325,12 @@ window.addEventListener("load", () => {
     $$(".tab").forEach((t) => t.classList.toggle("hidden", t.id !== "tab-" + b.dataset.tab));
     if (b.dataset.tab === "laptop") loadLaptop();
     if (b.dataset.tab === "tasks") loadTasks();
+    if (b.dataset.tab === "today") loadToday();
   });
+  $("#td-read").onclick = () => { const was = speakReplies; speakReplies = true; say($("#td-brief").textContent); speakReplies = was; };
+  $("#td-refresh").onclick = async () => {
+    try { $("#td-brief").textContent = await call("brief_me"); loadToday(); } catch (e) { toast(e.message); }
+  };
   $("#task-add").onsubmit = async (e) => {
     e.preventDefault();
     try {

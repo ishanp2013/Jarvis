@@ -72,6 +72,11 @@ DEFAULTS = {
     "agent_auto_prepare": True,      # prepare drafts of new assignments (presentations, documents, notes) by itself
     "agent_output_dir": "",          # where prepared work is saved; empty = Documents\School Projects
     "classroom_enabled": False,
+    # welcome-back briefing
+    "briefing_enabled": True,        # brief me when I come back to the laptop
+    "briefing_away_min": 30,         # how long away counts as "away"
+    "briefing_speak": True,          # say it out loud (otherwise just show it)
+    "last_briefing": 0,
     "quiet_hours": "22-7",           # no spoken reminders between these hours
     # background core and remote access
     "port": 8765,                    # local server for the dashboard, the orb and the phone

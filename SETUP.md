@@ -353,6 +353,25 @@ A presentation takes about 3–5 minutes on the free AI and about 4 requests.
 
 **It's a draft.** Free AI models can make mistakes, including wrong numbers and wrong maths answers. Read it through, check the facts, and make it your own before handing anything in. Jarvis never submits anything.
 
+## 7o. Briefings and the Today view
+
+**When you come back** (no keyboard or mouse for 30 minutes, then you're back), and shortly after the laptop starts, Jarvis gives you a short spoken briefing of what happened since the last one, for example:
+
+> "Welcome back. You received 8 new messages and 3 emails. New: Science presentation: renewable energy, due Thursday. I've prepared Science presentation: renewable energy and saved it in your School Projects folder. Coming up: Maths test revision, tomorrow. 2 messages need your reply. Today: Football practice at 17:00."
+
+- **Asking for one:** "what did I miss?", "brief me", "what's happening today?".
+- **Staying quiet:** nothing is said if there's nothing new, in game mode, or during quiet hours (22:00–07:00). Briefings can be turned off or made silent in settings (`briefing_enabled`, `briefing_speak`, `briefing_away_min`).
+- **Privacy:** the briefing is made from what Jarvis already knows, with no AI request, and nothing leaves the laptop.
+
+**The Today tab** (first tab on the laptop dashboard and in the phone app) shows the briefing plus:
+- **Tasks:** overdue, new and coming up.
+- **Messages:** important school items, replies needed, announcements.
+- **Jarvis did:** checks, prepared files (with **Open**), approvals waiting, problems.
+- **Schedule:** today and tomorrow.
+- **Devices:** laptop and phone.
+- **Quick controls:** find my phone, game mode, check school.
+- **Recent activity.**
+
 ## 8. Safety rules built in
 
 - **Closing apps** and **sending** email, Discord, Slack, Telegram, WhatsApp messages or GitHub issues happen straight away when you ask, as you chose. Turn either back on under Settings → Confirmations.

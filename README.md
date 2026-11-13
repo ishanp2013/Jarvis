@@ -72,6 +72,10 @@ It is built to stay light on a mid-range laptop (it was developed on a Ryzen 5 3
 - **How:** it plans, researches reliable sources, writes, then checks and fixes its own draft before telling you.
 - **Drafts only:** everything is a draft for you to review, and nothing is ever submitted.
 
+**Briefings**
+- **Welcome back:** a spoken briefing when you return to the laptop: new messages and emails, new assignments, files Jarvis prepared, what's due, replies needed, approvals waiting, and today's schedule.
+- **Today tab:** the same, visual, on the laptop and the phone.
+
 **Dashboard**
 - Live orb
 - Conversation, activity log, settings and connections

@@ -491,6 +491,7 @@ class Brain:
         self.set_game_mode = None   # set by the app: callable(on: bool) -> str
         self.agent = None           # set by the app: the background agent (task list, checks)
         self.worker = None          # set by the app: prepares presentations, documents and notes
+        self.briefing_fn = None     # set by the app: the welcome-back briefing, as text
 
     # ---------------- approvals
     def _request_approval(self, name, args):
@@ -712,6 +713,11 @@ class Brain:
         # the phone (through KDE Connect)
         if (reply := self._phone_command(t)) is not None:
             return reply
+        # the briefing: "what did I miss", "brief me", "what's happening today"
+        if self.briefing_fn and (m(r"^(?:what did i miss|what have i missed|catch me up|brief me|(?:give me |read me )?(?:my |a |the )?"
+                                   r"(?:daily |morning )?briefing|what'?s (?:happening|on|new) today|what'?s new|"
+                                   r"what happened while i was (?:away|out|at school|gone))\??$")):
+            return self.briefing_fn()
         # the task list and the background agent
         if self.agent and (reply := self._task_command(t)) is not None:
             return reply

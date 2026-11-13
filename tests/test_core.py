@@ -1158,5 +1158,81 @@ class WorkCommandTests(RouterBase):
         self.assertEqual(self.queued[-1][3], {"path": "C:/x/Biology.pdf"})
 
 
+class BriefingTests(unittest.TestCase):
+    def setUp(self):
+        import datetime as dt
+        import time as _time
+        from jarvis.agent import briefing
+        from jarvis.agent.core import Agent
+        self.dt, self.briefing = dt, briefing
+        self.store = Store(Path(tempfile.mkdtemp()) / "t.db")
+        self.agent = Agent(self.store, lambda *a, **k: None)
+        self.since = _time.time() - 3600
+
+    def test_full_briefing(self):
+        dt = self.dt
+        today = dt.date.today()
+        s = self.store
+        for i in range(3):
+            s.add_item({"source": "gmail", "ext_id": f"e{i}", "sender": "Someone", "title": "Hi"})
+        iid = s.add_item({"source": "classroom", "ext_id": "c1", "sender": "Grade 9 Science", "title": "Classwork", "school": True})
+        s.update_item(iid, category="assignment", importance=4, summary="Science presentation on renewable energy")
+        rid = s.add_item({"source": "gmail", "ext_id": "e9", "sender": "Ms Rao", "title": "Trip", "school": True})
+        s.update_item(rid, category="request", importance=3, summary="Confirm the museum trip", needs_reply=1)
+        for n in range(4):
+            s.add_item({"source": "phone", "ext_id": f"p{n}", "sender": "Class 9B", "title": "WhatsApp"})
+        s.add_task("Science presentation: renewable energy", kind="presentation",
+                   due=(today + dt.timedelta(days=6)).isoformat(), source="classroom", source_ref="classroom:c1")
+        s.add_task("Maths test revision", kind="revision", due=(today + dt.timedelta(days=1)).isoformat(), source="phone")
+        s.add_task("History reading", due=(today - dt.timedelta(days=2)).isoformat())
+        jid = s.add_job("presentation", "Science presentation: renewable energy", {})
+        s.update_job(jid, state="done", result_path="C:/x/Renewable Energy.pptx")
+        events = [{"subject": "Football practice", "start": f"{today.isoformat()}T17:00", "all_day": False},
+                  {"subject": "Dentist", "start": f"{(today + dt.timedelta(days=1)).isoformat()}T09:30", "all_day": False}]
+
+        class W:
+            store = s
+        b = self.briefing.compose(s, self.agent, W(), since=self.since, calendar=lambda: events, pending=2)
+        spoken = b["spoken"]
+        self.assertTrue(spoken.startswith("Welcome back."))
+        self.assertIn("You received 4 new messages and 4 emails.", spoken)
+        self.assertIn("New: Science presentation: renewable energy", spoken)
+        self.assertIn("I've prepared Science presentation: renewable energy and saved it in your School Projects folder.", spoken)
+        self.assertIn("New: Maths test revision, due tomorrow.", spoken)  # new and due soon: said once, not twice
+        self.assertEqual(spoken.count("Maths test revision"), 1)
+        self.assertIn("1 task overdue, starting with History reading.", spoken)
+        self.assertIn("1 message needs your reply.", spoken)
+        self.assertIn("2 items are waiting for your approval.", spoken)
+        self.assertIn("Today: Football practice at 17:00.", spoken)
+        self.assertIn("Tomorrow you have Dentist.", spoken)
+        self.assertEqual(b["sections"]["schedule"]["due_tomorrow"], ["Maths test revision"])
+        self.assertFalse(b["empty"])
+
+    def test_quiet_return_and_calendar_errors(self):
+        def broken():
+            raise RuntimeError("No calendar is connected.")
+        b = self.briefing.compose(self.store, self.agent, None, since=self.since, calendar=broken)
+        self.assertTrue(b["empty"])
+        self.assertIn("Nothing new", b["spoken"])
+        self.assertEqual(b["sections"]["schedule"]["calendar_error"], "No calendar is connected.")
+
+    def test_quiet_hours(self):
+        import time as _time
+        from jarvis import app
+        with mock.patch.object(settings, "get", lambda k, d=None: "22-7" if k == "quiet_hours" else settings._data.get(k, d)):
+            at = lambda h: _time.struct_time((2026, 11, 13, h, 0, 0, 4, 317, 0))
+            self.assertTrue(app._quiet_hours(at(23)))
+            self.assertTrue(app._quiet_hours(at(6)))
+            self.assertFalse(app._quiet_hours(at(7)))
+            self.assertFalse(app._quiet_hours(at(15)))
+
+
+class BriefingCommandTests(RouterBase):
+    def test_what_did_i_miss(self):
+        self.brain.briefing_fn = lambda: "Welcome back. You received 2 emails."
+        for q in ("what did I miss", "brief me", "give me my briefing", "what's happening today", "catch me up"):
+            self.assertIn("You received 2 emails", self.ask(q), q)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

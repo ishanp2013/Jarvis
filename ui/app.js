@@ -26,7 +26,9 @@ window.onJarvis = (kind, d) => {
     case "approval_done": doneApproval(d); break;
     case "activity": $("#st-activity").textContent = d.text; addActivity({ ts: Date.now() / 1000, kind: "activity", text: d.text }); break;
     case "warning": toast(d.text); break;
-    case "notification": toast(d.text); if (!$("#tab-tasks").classList.contains("hidden")) loadAgent(); break;
+    case "notification": toast(d.text); if (!$("#tab-tasks").classList.contains("hidden")) loadAgent();
+      if (!$("#tab-today").classList.contains("hidden")) loadToday(); break;
+    case "briefing": if (!$("#tab-today").classList.contains("hidden")) loadToday(); break;
     case "paired": toast(`Paired ${d.name}.`); $("#pair-box").classList.add("hidden"); renderDevices(); break;
     case "game_mode": setGame(d.on);
       if (d.auto) toast(d.on ? `Game mode on${d.game ? " (" + d.game + ")" : ""}: listening paused.` : "Game mode off: listening again.");
@@ -330,6 +332,71 @@ function when(ts) {
   return d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+// ------------------------------------------------------------ Today view
+function li(text, cls, extra) {
+  const el = document.createElement("li"); el.textContent = text; if (cls) el.className = cls;
+  if (extra) el.appendChild(extra);
+  return el;
+}
+
+function fill(sel, rows, emptyText) {
+  const ul = $(sel); ul.innerHTML = "";
+  if (!rows.length) { ul.appendChild(li(emptyText, "muted")); return; }
+  rows.forEach((r) => ul.appendChild(r));
+}
+
+function renderToday(d) {
+  const b = d.briefing, s = b.sections;
+  $("#td-brief").textContent = b.spoken;
+  $("#td-since").textContent = "Since " + new Date(b.since * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  const t = s.tasks, dueCls = (x) => x.due.startsWith("overdue") || x.due === "today" ? "urgent" : x.due === "tomorrow" ? "soon" : "";
+  fill("#td-tasks", [
+    ...t.overdue.map((x) => li(`${x.title}: ${x.due}`, "urgent")),
+    ...t.new.map((x) => li(`New: ${x.title}, due ${x.due}`, dueCls(x))),
+    ...t.top.filter((x) => !t.new.some((n) => n.id === x.id) && !t.overdue.some((o) => o.id === x.id)).slice(0, 4)
+      .map((x) => li(`${x.title}, due ${x.due}`, dueCls(x))),
+    ...(t.done.length ? [li(`Done since then: ${t.done.join(", ")}`, "muted")] : []),
+  ], "No open tasks.");
+  const m = s.messages;
+  fill("#td-messages", [
+    li(`${m.emails} emails, ${m.messages} messages, ${m.school} from school`, "muted"),
+    ...m.important.map((x) => li(`${x.summary} (${x.from})`, "soon")),
+    ...m.needs_reply.map((x) => li(`Needs a reply: ${x.summary} (${x.from})`)),
+    ...m.announcements.map((x) => li(`Announcement: ${x}`)),
+  ], "");
+  const a = s.agent;
+  const files = a.files.map((f) => {
+    const btn = document.createElement("button"); btn.className = "small ghost"; btn.textContent = "Open";
+    btn.onclick = async () => toast(await api.open_result(f.id));
+    return li(`Prepared ${f.title}`, "", btn);
+  });
+  fill("#td-agent", [
+    li(`${a.checks} checks, ${a.analysed} school items understood`, "muted"),
+    ...files,
+    ...(a.approvals ? [li(`${a.approvals} waiting for your approval (cards in the middle)`, "soon")] : []),
+    ...a.failed.map((x) => li(`Couldn't finish: ${x}`, "urgent")),
+    ...(a.waiting ? [li(`${a.waiting} waiting for AI budget`, "muted")] : []),
+    ...a.problems.map((x) => li(x, "muted")),
+  ], "");
+  const sc = s.schedule;
+  fill("#td-schedule", [
+    ...sc.today.map((e) => li(`Today ${e.time}: ${e.subject}`)),
+    ...sc.tomorrow.map((e) => li(`Tomorrow ${e.time}: ${e.subject}`, "muted")),
+    ...sc.due_tomorrow.map((x) => li(`Due tomorrow: ${x}`, "soon")),
+    ...(sc.calendar_error ? [li("Calendar: " + sc.calendar_error, "muted")] : []),
+  ], "Nothing on your calendar today or tomorrow.");
+  const st = d.status, ph = d.phone;
+  fill("#td-devices", [
+    li(`${st.name}: ${st.battery ? st.battery.percent + "%" + (st.battery.plugged ? " charging" : "") : "mains"}, ` +
+       `CPU ${Math.round(st.cpu)}%, ${st.keep_awake ? "kept awake" : "normal sleep"}${st.game_mode ? ", game mode" : ""}`),
+    ...(ph.devices || []).map((x) => li(`${x.name}: ${x.reachable ? "connected" : "not reachable"}`, x.reachable ? "" : "muted")),
+    ...(!ph.installed ? [li("Phone: KDE Connect not installed", "muted")] : []),
+  ], "");
+  fill("#td-activity", d.activity.slice(0, 8).map((x) => li(`${fmtTime(x.ts)} ${x.text.slice(0, 140)}`, "muted")), "Nothing yet.");
+}
+
+async function loadToday() { try { renderToday(await api.today()); } catch (e) { $("#td-brief").textContent = "Couldn't load: " + e.message; } }
+
 const JOB_STATE = { done: "ready", running: "working on it", queued: "queued", waiting: "waiting for AI budget", failed: "couldn't finish" };
 
 async function loadJobs() {
@@ -400,6 +467,7 @@ function wire() {
     $$(".tab").forEach((t) => t.classList.toggle("hidden", t.id !== "tab-" + tab));
     if (tab === "activity") loadActivity();
     if (tab === "tasks") loadAgent();
+    if (tab === "today") loadToday();
     if (tab === "settings") { api.routines().then(renderRoutines); renderRemote(); }
   }));
   $("#btn-mic").onclick = async () => setMic(await api.set_mic(!micOn));
@@ -478,6 +546,14 @@ function wire() {
       if (r && r.ok) tok.value = "";
     };
     card.querySelector("[data-disconnect]").onclick = async () => refreshIntegrations(await api.disconnect_service(name));
+  });
+  $("#brief-me").onclick = async () => { $("#td-brief").textContent = await api.brief_me(); loadToday(); };
+  $$("[data-quick]").forEach((b) => b.onclick = async () => {
+    const q = b.dataset.quick;
+    if (q === "ring") toast(await api.phone_ring());
+    if (q === "game") { toast(await api.game_mode(!window.gameMode)); refreshIntegrations(); }
+    if (q === "check") toast(await api.agent_run_now());
+    if (q === "tasks") $('[data-tab="tasks"]').click();
   });
   $("#agent-run").onclick = async () => {
     toast(await api.agent_run_now());
@@ -570,4 +646,6 @@ window.addEventListener("pywebviewready", async () => {
   renderContacts(await api.whatsapp_contacts());
   renderRoutines(await api.routines());
   refreshChips(init.secrets); refreshIntegrations(init.integrations);
+  loadToday();
+  setInterval(() => { if (!document.hidden && !$("#tab-today").classList.contains("hidden")) loadToday(); }, 60000);
 });

@@ -64,14 +64,34 @@
   <!-- right column -->
   <section class="col wide">
     <nav class="tabs">
-      <button data-tab="chat" class="active">Conversation</button>
+      <button data-tab="today" class="active">Today</button>
+      <button data-tab="chat">Conversation</button>
       <button data-tab="tasks">Tasks</button>
       <button data-tab="activity">Activity</button>
       <button data-tab="settings">Settings</button>
       <button data-tab="connect">Connections</button>
     </nav>
 
-    <div class="panel tab grow" id="tab-chat">
+    <div class="panel tab grow scroll" id="tab-today">
+      <div class="brief">
+        <div class="row"><h2>Briefing</h2><button class="small" id="brief-me">Brief me</button></div>
+        <p id="td-brief">Loading…</p>
+        <small class="muted" id="td-since"></small>
+      </div>
+      <div class="today-grid">
+        <section class="card"><h3>Tasks</h3><ul id="td-tasks" class="mini"></ul></section>
+        <section class="card"><h3>Messages</h3><ul id="td-messages" class="mini"></ul></section>
+        <section class="card"><h3>Jarvis did</h3><ul id="td-agent" class="mini"></ul></section>
+        <section class="card"><h3>Schedule</h3><ul id="td-schedule" class="mini"></ul></section>
+        <section class="card"><h3>Devices</h3><ul id="td-devices" class="mini"></ul></section>
+        <section class="card"><h3>Quick controls</h3>
+          <div class="quick"><button class="small" data-quick="ring">Find my phone</button><button class="small" data-quick="game">Game mode</button>
+            <button class="small" data-quick="check">Check school</button><button class="small" data-quick="tasks">All tasks</button></div>
+          <h3>Recent activity</h3><ul id="td-activity" class="mini"></ul></section>
+      </div>
+    </div>
+
+    <div class="panel tab grow hidden" id="tab-chat">
       <div id="chat"></div>
     </div>
 
