@@ -17,7 +17,7 @@ Your data is kept in `%LOCALAPPDATA%\JarvisAssistant`:
 
 API keys are stored in **Windows Credential Manager**, not in files.
 
-> **Disk space:** this PC had only about 2 GB free while I was building Jarvis. Jarvis itself needs about 1.2 GB (Python environment plus models). Free up space before trying a local Ollama model (1–2 GB each).
+> **Disk space:** Jarvis needs about 1.5 GB (Python environment plus models). A local Ollama model needs another 1–2 GB.
 
 ## 2. What works where
 
@@ -44,12 +44,12 @@ These commands work with no AI model at all:
 
 ## 3. AI model and costs (checked against official docs, 3 Nov 2026)
 
-**Claude Pro (your father's account): can't be used.**
+**A Claude Pro subscription can't be used.**
 - Pro doesn't include API access.
 - Anthropic's terms forbid sharing an account login.
 - Using a Claude.ai subscription login to power other apps is not permitted; apps are meant to use API keys.
 
-**Google AI Pro (your father's account): doesn't help.**
+**A Google AI Pro subscription doesn't help.**
 - AI Pro benefits apply only in the Gemini apps and the AI Studio web interface. They include no Gemini API quota.
 - AI Pro can be shared with up to 5 people through a Google One family group, but that still gives no API access.
 

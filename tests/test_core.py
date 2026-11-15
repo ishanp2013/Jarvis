@@ -826,7 +826,7 @@ class PhoneControlTests(RouterBase):
         def fake_run(*args, timeout=20):
             self.sent.append(args)
             if args == ("-l",):
-                return 0, "- POCO F1: abc123 on 192.168.0.5 via LAN (paired and reachable)\n- Old phone: def456 (paired)", ""
+                return 0, "- Pixel 8: abc123 on 192.168.0.5 via LAN (paired and reachable)\n- Old phone: def456 (paired)", ""
             if "--list-notifications" in args:
                 return 0, "- WhatsApp: Sam\n- WhatsApp: Class 10B group\n- Gmail: Science homework\n- YouTube: New video", ""
             return 0, "", ""
@@ -836,7 +836,7 @@ class PhoneControlTests(RouterBase):
         phone._cache.update(at=0, devices=[])
 
     def test_devices_parsed(self):
-        self.assertEqual(self.phone.devices(refresh=True), [{"id": "abc123", "name": "POCO F1", "reachable": True},
+        self.assertEqual(self.phone.devices(refresh=True), [{"id": "abc123", "name": "Pixel 8", "reachable": True},
                                                             {"id": "def456", "name": "Old phone", "reachable": False}])
 
     def test_unlock_is_refused(self):
@@ -844,9 +844,9 @@ class PhoneControlTests(RouterBase):
         self.assertFalse(any("--unlock" in a for a in self.sent))
 
     def test_find_and_open(self):
-        self.assertIn("Ringing your POCO F1", self.ask("find my phone"))
+        self.assertIn("Ringing your Pixel 8", self.ask("find my phone"))
         self.assertIn(("-d", "abc123", "--ring"), self.sent)
-        self.assertIn("Opening WhatsApp on your POCO F1", self.ask("open whatsapp on my phone"))
+        self.assertIn("Opening WhatsApp on your Pixel 8", self.ask("open whatsapp on my phone"))
         self.ask("open youtube on my phone")
         self.assertEqual(self.sent[-1], ("-d", "abc123", "--share", "https://www.youtube.com"))
         self.assertNotIn("youtube", [c[0] for c in self.calls])  # the laptop didn't open YouTube
@@ -870,10 +870,10 @@ class PhoneControlTests(RouterBase):
 
     def test_unreachable_phone_is_reported(self):
         def offline(*args, timeout=20):
-            return (0, "- POCO F1: abc123 (paired)", "") if args == ("-l",) else (0, "", "")
+            return (0, "- Pixel 8: abc123 (paired)", "") if args == ("-l",) else (0, "", "")
         with mock.patch.object(self.phone, "_run", offline):
             self.phone._cache.update(at=0, devices=[])
-            self.assertIn("can't reach your POCO F1", self.ask("find my phone"))
+            self.assertIn("can't reach your Pixel 8", self.ask("find my phone"))
 
 
 class AgentTests(unittest.TestCase):
