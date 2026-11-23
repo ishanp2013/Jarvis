@@ -12,7 +12,7 @@ import subprocess
 import psutil
 import webview
 
-from . import autostart, config, power, providers, speech
+from . import ai, autostart, config, power, providers, speech, team
 from . import brain as brain_module
 from .agent.core import Agent
 from .agent.worker import Worker
@@ -149,8 +149,9 @@ class Jarvis:
     def _auto_prepare(self, task):
         """Scholar found an assignment: hand it to Forge to prepare a draft."""
         if settings.get("agent_auto_prepare", True) and task and self.worker.queue_task(task):
-            self.store.add_handoff("scholar", "forge", f"Prepare {task['title']}")
+            hid = self.store.add_handoff("scholar", "forge", f"Prepare {task['title']}")
             self.store.log("handoff", f"Scholar handed {task['title']} to Forge", "scholar")
+            self.emit("handoff", {"from": "scholar", "to": "forge", "what": f"Prepare {task['title']}", "status": "working", "id": hid})
 
     def _reply_card(self, item, text):
         self.brain._request_approval("email_reply", {"id": item["ext_id"], "body": text})
@@ -333,7 +334,7 @@ class Api:
     def init(self):
         j = self._j
         return {"settings": settings.public(), "secrets": secret_status(), "state": j.state, "ready": j.ready,
-                "mic": bool(j.listener and j.listener.stream), "history": j.store.recent_messages(40),
+                "mic": bool(j.listener and j.listener.stream), "history": j.store.recent_messages(40, "jarvis"),
                 "memories": j.store.memories(), "activity": j.store.activity(60),
                 "pending": list(j.brain.pending.values()), "integrations": self.integrations()}
 
@@ -532,6 +533,45 @@ class Api:
 
     def send_text(self, text, source="text"):
         threading.Thread(target=self._j.brain.handle, args=(text, source), daemon=True).start()
+
+    # ---------- the team (Team view and direct chats)
+    def team(self):
+        """Every agent: profile, what it's doing now, AI used today and its latest action."""
+        j = self._j
+        used = ai.usage().get("by_agent", {})
+        recent = j.store.activity(400)
+        day_start = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+        out = []
+        for name, a in team.AGENTS.items():
+            mine = [x for x in recent if x["agent"] == name]
+            busy = (j.brain._working == name or (name == "forge" and j.worker.current is not None)
+                    or (name == "scholar" and j.agent.running) or (name == "jarvis" and j.state in ("thinking", "speaking")))
+            out.append({**a.profile(), "status": "off" if not a.enabled else "working" if busy else "idle",
+                        "used_today": used.get(name, 0), "done_today": sum(1 for x in mine if x["ts"] >= day_start),
+                        "last": mine[0]["text"][:160] if mine else "", "last_ts": mine[0]["ts"] if mine else None})
+        return out
+
+    def set_agent(self, name, on):
+        if name in team.AGENTS and name != "jarvis":  # Jarvis leads; he can't be switched off
+            settings.update({f"agent_{name}_on": bool(on)})
+            self._j.store.log("settings", f"{team.agent(name).title} switched {'on' if on else 'off'}", name)
+        return self.team()
+
+    def ask_agent(self, name, text, source="text"):
+        """A direct chat with one specialist: Jarvis isn't asked first, which saves an AI request."""
+        threading.Thread(target=self._j.brain.handle, args=(text, source, name), daemon=True).start()
+
+    def chat_history(self, channel="jarvis"):
+        return self._j.store.recent_messages(60, channel)
+
+    def team_feed(self):
+        """The #team channel: handoffs between team members and what each one did, newest last."""
+        j = self._j
+        feed = [{"ts": h["ts"], "kind": "handoff", "from": h["from"], "to": h["to"], "text": h["what"], "status": h["status"],
+                 "result": h["result"]} for h in j.store.handoffs(40)]
+        feed += [{"ts": x["ts"], "kind": x["kind"], "from": x["agent"], "text": x["text"]}
+                 for x in j.store.activity(200) if x["agent"] and x["kind"] in ("agent", "quick", "blocked", "notify")]
+        return sorted(feed, key=lambda x: x["ts"])[-80:]
 
     def voice(self, audio_b64, source="phone"):
         """A voice note recorded on the phone: transcribed here with the same on-device Whisper."""

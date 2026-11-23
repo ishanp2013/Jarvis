@@ -523,6 +523,9 @@ class Brain:
         self.briefing_fn = None     # set by the app: the welcome-back briefing, as text
         self.acting = None          # the team member acting now; None = Jarvis acting for the whole team
         self._final = []            # answers from specialists during one request
+        self.channel = "jarvis"     # the chat the current request came from
+        self._reply_agent = "jarvis"
+        self._working = None        # the specialist working right now, for the Team view
 
     # ---------------- approvals
     def _request_approval(self, name, args):
@@ -574,9 +577,12 @@ class Brain:
         return "Cancelled."
 
     # ---------------- entry point
-    def handle(self, text, source="voice"):
+    def handle(self, text, source="voice", channel="jarvis"):
+        """channel: "jarvis" (the main chat, where Jarvis leads) or a specialist's name for a direct chat with it."""
         names = "|".join(re.escape(n) for n in {settings.get("assistant_name") or "jarvis", "jarvis", "alexa", "mycroft", "rhasspy"})
         text = re.sub(rf"^\W*(hey|hi|ok|okay)?[\s,]*({names})\b\W*", "", text.strip(), flags=re.I).strip()
+        channel = channel if team.agent(channel or "") else "jarvis"
+        self.channel = channel
         if not text:
             self._say("Yes?")
             return
@@ -584,8 +590,9 @@ class Brain:
         gen = self.cancel_gen
         self.source = source
         self.request = text  # the user's own words: what may trigger an unconfirmed send
-        self.store.add_message("user", text)
-        self.emit("message", {"role": "user", "text": text})
+        self._reply_agent = channel
+        self.store.add_message("user", text, None, channel)
+        self.emit("message", {"role": "user", "text": text, "channel": channel})
         self.emit("state", {"state": "thinking"})
         stream = None
         try:
@@ -593,8 +600,9 @@ class Brain:
             reply, sources = self._quick(text), []
             if reply is None:
                 stream = self._start_stream(gen)
-                reply, sources = self._llm(text)
+                reply, sources = self._llm(text, direct=channel if channel != "jarvis" else None)
             elif reply:  # answered without AI: note which team member's job it was
+                self._reply_agent = self._qowner
                 self.store.log("quick", text[:120], self._qowner)
         except RuntimeError as e:  # tools raise these with a message meant for the user ("GitHub isn't connected…")
             reply, sources = str(e), []
@@ -644,8 +652,13 @@ class Brain:
         has_h = bool(h and re.search(rf"\b{re.escape(h)}\b", full, re.I))
         st.finish(None if has_h else self._address)
         full = full if has_h else self._address(full)
-        self.store.add_message("assistant", full)
-        self.emit("message", {"role": "assistant", "text": full, "sources": list(sources)})
+        self._post(full, sources)
+
+    def _post(self, text, sources=()):
+        """An answer into the chat, marked with the team member who gave it and the channel it belongs to."""
+        agent, channel = getattr(self, "_reply_agent", "jarvis") or "jarvis", getattr(self, "channel", "jarvis")
+        self.store.add_message("assistant", text, agent, channel)
+        self.emit("message", {"role": "assistant", "text": text, "sources": list(sources), "agent": agent, "channel": channel})
 
     @staticmethod
     def _address(reply):
@@ -660,8 +673,7 @@ class Brain:
 
     def _say(self, reply, sources=()):
         reply = self._address(reply)
-        self.store.add_message("assistant", reply)
-        self.emit("message", {"role": "assistant", "text": reply, "sources": list(sources)})
+        self._post(reply, sources)
         self.speak(reply)
 
     def interrupt(self):
@@ -929,6 +941,7 @@ class Brain:
         # Private mode keeps personal data (mail, calendar, tasks, Discord) away from cloud AI.
         if self._private_cloud() and PERSONAL_RE.search(t):
             return self._offline_fallback(t)
+        self._qowner = "jarvis"  # anything past here is Jarvis's own reply
         # With an AI model available, richer requests (email, calendar, research) go there.
         if self._llm_available():
             return None
@@ -1223,9 +1236,9 @@ class Brain:
         return {"gemini": self._gemini, "anthropic": self._anthropic, "openai": self._openai_compat,
                 "ollama": self._ollama}[p["kind"]]
 
-    def _delegate(self, name, request, sources):
-        """Jarvis passes a request to a specialist. It works with only its own tools and instructions, and its
-        answer goes straight to the user (Jarvis doesn't spend another request rewording it)."""
+    def _delegate(self, name, request, sources, sender="jarvis"):
+        """Jarvis (or you, in a direct chat) passes a request to a specialist. It works with only its own tools and
+        instructions, and its answer goes straight to the user (Jarvis doesn't spend another request rewording it)."""
         a = team.agent(name)
         if not a or name == "jarvis":
             return {"error": f"There's no specialist called {name}."}
@@ -1234,9 +1247,12 @@ class Brain:
         if a.personal and self._private_cloud():
             return {"error": f"Private mode keeps {a.title}'s work (personal messages and school data) away from online AI. "
                              "Tell the user they can use a simple command like 'check my email', or turn private mode off."}
-        hid = self.store.add_handoff("jarvis", name, request)
-        self.store.log("handoff", f"Jarvis asked {a.title}: {request[:150]}", "jarvis")
+        hid = self.store.add_handoff(sender, name, request)
+        who = "You" if sender == "you" else "Jarvis"
+        self.store.log("handoff", f"{who} asked {a.title}: {request[:150]}", sender if sender != "you" else name)
         self.emit("activity", {"text": f"Asking {a.title}", "agent": name})
+        self.emit("handoff", {"from": sender, "to": name, "what": request[:200], "status": "working", "id": hid})
+        self._working = name
         prompt = request if request.strip() == (self.request or "").strip() else \
             f"{request}\n\n(The user's own words were: \"{self.request}\")"
         if name == "scout":
@@ -1246,11 +1262,15 @@ class Brain:
             reply = (self._provider_loop()(prompt, sources) or "").strip()
         except Exception as e:
             self.store.update_handoff(hid, "failed", str(e))
+            self.emit("handoff", {"from": sender, "to": name, "what": request[:200], "status": "failed", "id": hid})
             raise
         finally:
             self.acting = prev
+            self._working = None
         self.store.update_handoff(hid, "done", reply)
         self.store.log("agent", f"{a.title}: {reply[:200]}", name)
+        self.emit("handoff", {"from": sender, "to": name, "what": request[:200], "status": "done", "id": hid})
+        self._reply_agent = name  # the answer in the chat shows as this specialist's
         self._final.append(reply or "Done.")
         return {"answer_from": a.title, "answer": reply, "note": "This answer has been given to the user already."}
 
@@ -1271,7 +1291,8 @@ class Brain:
                 "\n\nAnswer only from these results, or open one with read_webpage for detail. Name the source you used. "
                 "If they don't answer the question, say so.")
 
-    def _llm(self, text):
+    def _llm(self, text, direct=None):
+        """direct: a specialist's name when you're chatting with it directly (Jarvis isn't asked, saving a request)."""
         p = providers.current()
         sources = []
         self._final = []  # specialists' answers, which go to the user as they are
@@ -1279,7 +1300,11 @@ class Brain:
         if self.acting is None and settings.get("team_mode", True):
             self.acting = "jarvis"  # the leader: talks, and passes work to the team
         try:
-            reply = self._provider_loop()(text, sources)
+            if direct:
+                out = self._delegate(direct, text, sources, sender="you")
+                reply = " ".join(self._final) if self._final else out.get("error", "Done.")
+            else:
+                reply = self._provider_loop()(text, sources)
         except Exception as e:
             msg = str(e)
             log.warning("LLM error: %s", msg)

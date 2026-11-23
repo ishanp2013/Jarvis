@@ -31,7 +31,7 @@ COOKIE = "jarvis_device"
 PHONE_METHODS = {"init", "send_text", "voice", "stop", "approve", "reject", "integrations", "activity", "ping",
                  "laptop_status", "screenshot", "running_apps", "lock_laptop", "power", "cancel_power", "game_mode",
                  "tasks", "add_task", "complete_task", "dismiss_task", "agent_status", "agent_run_now",
-                 "jobs", "prepare_task", "open_result", "today", "brief_me"}
+                 "jobs", "prepare_task", "open_result", "today", "brief_me", "team", "team_feed", "chat_history", "ask_agent"}
 # The phone app's own files, served before pairing so it can show the pairing screen (and work offline).
 APP_SHELL = {"mobile.html", "mobile.js", "mobile.css", "manifest.json", "sw.js", "icon.svg", "orb.js"}
 INJECT = ("index.html", "overlay.html", "mobile.html")
@@ -156,8 +156,12 @@ def make_handler(api, ui_dir, port, hub, store=None, pairing=None):
             body = path.read_bytes()
             if name in INJECT:  # pages on this PC get the per-run token; the phone uses its device key instead
                 body = body.replace(b"<!--bridge-->", b"" if self._remote() else bridge.encode())
-            ctype = "application/manifest+json" if name.endswith(".webmanifest") or name == "manifest.json" else \
-                mimetypes.guess_type(name)[0] or "application/octet-stream"
+            # Windows sometimes maps .js to text/plain, and browsers refuse to run modules served that way.
+            known = {".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".woff2": "font/woff2",
+                     ".svg": "image/svg+xml", ".html": "text/html"}
+            ext = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+            ctype = "application/manifest+json" if name == "manifest.json" else \
+                known.get(ext) or mimetypes.guess_type(name)[0] or "application/octet-stream"
             self._send(200, body, ctype, [("Service-Worker-Allowed", "/")] if name == "sw.js" else ())
 
         # ---- POST: pairing and API calls
@@ -181,7 +185,7 @@ def make_handler(api, ui_dir, port, hub, store=None, pairing=None):
                 return self._send(404, b'"unknown method"')
             try:
                 args = self._body() or []
-                if device and name in ("send_text", "voice", "brief_me"):
+                if device and name in ("send_text", "voice", "brief_me", "ask_agent"):
                     args = list(args) + ["phone"]  # replies to the phone aren't spoken on the laptop
                 result = getattr(api, name)(*args)
                 self._send(200, json.dumps(result, default=str).encode())

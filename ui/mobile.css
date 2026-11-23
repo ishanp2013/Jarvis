@@ -1,11 +1,20 @@
+@font-face { font-family: "Orbitron"; font-weight: 700; src: url(vendor/fonts/orbitron-700.woff2) format("woff2"); font-display: swap; }
+@font-face { font-family: "Rajdhani"; font-weight: 500; src: url(vendor/fonts/rajdhani-500.woff2) format("woff2"); font-display: swap; }
+@font-face { font-family: "Rajdhani"; font-weight: 600; src: url(vendor/fonts/rajdhani-600.woff2) format("woff2"); font-display: swap; }
 :root {
-  --bg: #090603; --panel: #140d06; --line: #3a2a14; --gold: #ffcf7a; --text: #f3e6cf; --muted: #a8977b;
+  --bg: #05070b; --panel: rgba(12, 16, 26, .85); --line: rgba(255, 186, 90, .18); --gold: #ffd98a; --accent: #ffb547;
+  --text: #eef2f7; --muted: #8d9aab; --cyan: #6fd6ff;
   --ok: #4fe3a1; --warn: #ffb84f; --danger: #ff5f6d;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
-  font: 15px/1.45 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; }
+html, body { margin: 0; height: 100%; color: var(--text);
+  background: radial-gradient(600px 420px at 50% 0%, rgba(255, 170, 60, .12), transparent 70%), var(--bg);
+  font: 500 16px/1.42 "Rajdhani", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; }
+.brand, h2, nav button, .card h2 { font-family: "Orbitron", "Segoe UI", sans-serif; }
+.who { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; font: 700 10px "Orbitron", sans-serif; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--c, var(--accent)); }
+.who i { width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--accent)); box-shadow: 0 0 8px var(--c, var(--accent)); }
 body { display: flex; flex-direction: column; padding-bottom: env(safe-area-inset-bottom); }
 .hidden { display: none !important; }
 header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px;
@@ -21,8 +30,10 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 #tab-chat { padding-bottom: 0; }
 #chat { flex: 1; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
 .msg { max-width: 85%; padding: 8px 12px; border-radius: 14px; white-space: pre-wrap; word-wrap: break-word; }
-.msg.user { align-self: flex-end; background: #3a2a14; }
-.msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); }
+.msg.user { align-self: flex-end; background: linear-gradient(180deg, rgba(255, 181, 71, .2), rgba(255, 181, 71, .1));
+  border: 1px solid rgba(255, 181, 71, .3); border-bottom-right-radius: 4px; }
+.msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--c, var(--accent));
+  border-bottom-left-radius: 4px; }
 .msg small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
 .msg img, #lp-out img { max-width: 100%; border-radius: 8px; margin-top: 6px; display: block; }
 .msg a { color: var(--gold); }

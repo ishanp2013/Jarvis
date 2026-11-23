@@ -6,8 +6,14 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
+<div id="boot" aria-hidden="true">
+  <div class="boot-ring"></div>
+  <div class="boot-title">J.A.R.V.I.S</div>
+  <div class="boot-lines" id="boot-lines"></div>
+</div>
+<div class="hud-bg" aria-hidden="true"></div>
 <header>
-  <div class="brand"><span class="dot"></span>J.A.R.V.I.S</div>
+  <div class="brand"><span class="dot"></span><span class="brand-name">J.A.R.V.I.S</span><span class="brand-sub">personal assistant</span></div>
   <div class="chips">
     <span class="chip" id="chip-mic">Mic</span>
     <span class="chip" id="chip-wake">Wake word</span>
@@ -36,6 +42,10 @@
       <div class="meter"><span>RAM</span><div class="bar"><i id="m-ram"></i></div><b id="v-ram">-</b></div>
       <div class="kv"><span>Jarvis uses</span><b id="v-me">-</b></div>
     </div>
+    <div class="panel">
+      <h2>Team</h2>
+      <ul class="roster" id="roster"></ul>
+    </div>
     <div class="panel grow">
       <h2>Integrations</h2>
       <ul class="integrations" id="integrations"></ul>
@@ -45,7 +55,10 @@
 
   <!-- centre -->
   <section class="centre">
-    <canvas id="orb" width="640" height="640" aria-hidden="true"></canvas>
+    <div class="core-host" id="core-host" aria-hidden="true">
+      <div class="core-frame"><i></i><i></i><i></i><i></i></div>
+      <canvas id="orb" width="640" height="640"></canvas>
+    </div>
     <div class="state-label" id="state-label">Starting up…</div>
     <div class="hint" id="hint">Say "Hey Jarvis", or press Talk.</div>
     <div class="controls">
@@ -65,7 +78,7 @@
   <section class="col wide">
     <nav class="tabs">
       <button data-tab="today" class="active">Today</button>
-      <button data-tab="chat">Conversation</button>
+      <button data-tab="chat">Team</button>
       <button data-tab="tasks">Tasks</button>
       <button data-tab="activity">Activity</button>
       <button data-tab="settings">Settings</button>
@@ -91,8 +104,12 @@
       </div>
     </div>
 
-    <div class="panel tab grow hidden" id="tab-chat">
-      <div id="chat"></div>
+    <div class="panel tab grow hidden team-tab" id="tab-chat">
+      <nav class="channels" id="channels" aria-label="Team channels"></nav>
+      <section class="channel">
+        <div class="channel-head" id="channel-head"></div>
+        <div class="channel-body" id="channel-body"><div id="chat"></div></div>
+      </section>
     </div>
 
     <div class="panel tab grow hidden scroll" id="tab-tasks">
@@ -256,6 +273,7 @@
       <label>Browser path (Opera GX) <input data-set="browser_path"></label>
       <label class="check"><input type="checkbox" id="overlay-toggle"> Floating orb: a small always-on-top Jarvis (click to talk, double-click to open this window, drag to move)</label>
       <label class="check"><input type="checkbox" data-set="game_mode_auto"> Game mode turns on by itself when a game is in front, and stops listening until you close it</label>
+      <label class="check"><input type="checkbox" data-set="ui_low_power"> Low-power look: the flat 2D core instead of the 3D one (lighter on older laptops; reopen the dashboard to apply)</label>
 
       <h3>Confirmations</h3>
       <label class="check"><input type="checkbox" data-set="confirm_close"> Ask before closing apps</label>
@@ -362,5 +380,11 @@
   </section>
 </main>
 <!--bridge--><script src="orb.js"></script><script src="app.js"></script>
+<script type="module">
+  // The 3D core loads as a module; app.js starts it (or the 2D orb) once settings are known.
+  import { startCore3D } from "./core3d.js";
+  window.startCore3D = startCore3D;
+  window.dispatchEvent(new Event("core3d-ready"));
+</script>
 </body>
 </html>

@@ -93,6 +93,7 @@ DEFAULTS = {
     # desktop extras
     "game_mode_auto": True,          # pause wake-word listening while a game is in the foreground
     "overlay_enabled": False,        # small always-on-top orb
+    "ui_low_power": False,           # flat 2D core instead of the 3D one
     "private_mode": True,            # never send mail/calendar/tasks/Discord content to a cloud AI
     # desktop
     "browser_path": str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Opera GX" / "opera.exe"),

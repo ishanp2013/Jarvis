@@ -47,6 +47,7 @@ Jarvis runs in the background, starts with Windows and is reachable from your ph
 | **Background agent** | Checks Classroom, Gmail and phone notifications every 45 minutes. Understands assignments and tests, keeps a task list, drafts replies for your approval, and reminds you before deadlines. |
 | **Prepared work** | Turns tasks into finished PowerPoint decks, Word documents, study notes, revision sheets and spreadsheets, researched from reliable sources and saved in *Documents\School Projects*. |
 | **Briefings** | "Welcome back. You received 8 messages… I've prepared your science presentation…", spoken when you return, plus a Today tab on the laptop and phone. |
+| **Dashboard** | A holographic HUD: a 3D Jarvis core that pulses with your voice and his (a flat 2D core in low-power mode), a boot sequence, live system meters, and a **Team** tab that works like Discord: talk to Jarvis, watch the **#team** channel as agents hand work to each other, or chat directly with one specialist. |
 | **Jarvis and his team** | Jarvis talks to you and passes work to five specialists: **Scholar** (school, tasks), **Forge** (makes files), **Herald** (messages), **Operator** (laptop and phone), **Scout** (research). Each uses only its own tools, and only Herald can send, enforced in code. Common commands use no AI; a chat question costs 1 request; delegated work costs 2 or more. Scout searches the web before answering. |
 
 ---
@@ -420,6 +421,8 @@ jarvis/
 ui/               dashboard, floating orb, phone app (service worker for offline)
 tests/            test suite
 ```
+
+The dashboard bundles [Three.js](https://threejs.org) (MIT) and the Orbitron and Rajdhani fonts (SIL Open Font License) in `ui/vendor`, so it works offline.
 
 Run the tests with **`run_tests.bat`**. Desktop actions and online services are mocked, so nothing is opened, closed or sent.
 

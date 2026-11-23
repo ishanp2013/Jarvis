@@ -7,6 +7,9 @@ let state = "starting";
 let level = 0;            // mic loudness while listening
 let voiceLevel = 0;       // Jarvis's own voice loudness while speaking
 let micOn = false;
+let TEAM = {};            // agent name -> profile (title, colour, job…)
+let channel = "jarvis";   // the open chat: "jarvis", "team" (#team feed) or a specialist's name
+window.orbState = () => ({ state, level, voiceLevel, gameMode: !!window.gameMode });
 
 const LABELS = {
   idle: "Standing by", listening: "Listening", transcribing: "Processing", thinking: "Thinking",
@@ -21,7 +24,8 @@ window.onJarvis = (kind, d) => {
     case "voice_level": voiceLevel = d.rms; break;
     case "mic": setMic(d.on, d.error); break;
     case "wake": $("#hint").textContent = "Yes?"; break;
-    case "message": addMessage(d); break;
+    case "message": onMessage(d); break;
+    case "handoff": onHandoff(d); break;
     case "approval": showApproval(d); break;
     case "approval_done": doneApproval(d); break;
     case "activity": $("#st-activity").textContent = d.text; addActivity({ ts: Date.now() / 1000, kind: "activity", text: d.text }); break;
@@ -79,10 +83,146 @@ function setSystem(d) {
 // ------------------------------------------------------------ conversation
 function fmtTime(ts) { return new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
 
+// ------------------------------------------------------------ the team (Discord-style chat)
+function agentOf(name) { return TEAM[name] || { name: name || "jarvis", title: name ? name[0].toUpperCase() + name.slice(1) : "Jarvis", color: "#ffb040", job: "" }; }
+
+function avatar(name, size) {
+  const a = agentOf(name), el = document.createElement("span");
+  el.className = "avatar" + (size ? " " + size : ""); el.style.setProperty("--c", a.color); el.textContent = a.title[0];
+  el.title = a.title;
+  return el;
+}
+
+async function loadTeam() {
+  try {
+    const list = await api.team();
+    list.forEach((a) => { TEAM[a.name] = a; });
+    renderRoster(list);
+    if (channel !== "jarvis" && channel !== "team") renderChannelHead();
+    $$("#channels .chan").forEach((b) => { const a = TEAM[b.dataset.chan]; if (a) b.dataset.status = a.status; });
+  } catch (e) { console.warn("team", e); }
+}
+
+function renderRoster(list) {
+  const ul = $("#roster"); ul.innerHTML = "";
+  list.forEach((a) => {
+    const li = document.createElement("li"); li.dataset.status = a.status; li.style.setProperty("--c", a.color);
+    li.appendChild(avatar(a.name, "sm"));
+    const t = document.createElement("div");
+    const b = document.createElement("b"); b.textContent = a.title;
+    const s = document.createElement("small");
+    s.textContent = a.status === "working" ? "working…" : a.status === "off" ? "switched off" : a.done_today ? `${a.done_today} done today` : "ready";
+    t.append(b, s); li.appendChild(t);
+    li.onclick = () => { $('[data-tab="chat"]').click(); selectChannel(a.name); };
+    ul.appendChild(li);
+  });
+}
+
+function renderChannels() {
+  const nav = $("#channels"); nav.innerHTML = "";
+  const mk = (id, label, icon, color) => {
+    const b = document.createElement("button"); b.className = "chan"; b.dataset.chan = id; b.title = label;
+    b.style.setProperty("--c", color);
+    if (icon) b.appendChild(icon); else { const h = document.createElement("span"); h.className = "avatar hash"; h.textContent = "#"; b.appendChild(h); }
+    const l = document.createElement("small"); l.textContent = label; b.appendChild(l);
+    b.onclick = () => selectChannel(id);
+    nav.appendChild(b);
+  };
+  mk("jarvis", "Jarvis", avatar("jarvis"), agentOf("jarvis").color);
+  mk("team", "team", null, "#8fa7c4");
+  const sep = document.createElement("i"); sep.className = "sep"; nav.appendChild(sep);
+  Object.values(TEAM).filter((a) => a.name !== "jarvis").forEach((a) => mk(a.name, a.title, avatar(a.name), a.color));
+  selectChannel(channel);
+}
+
+function renderChannelHead() {
+  const head = $("#channel-head"); head.innerHTML = "";
+  if (channel === "team") {
+    head.innerHTML = "<div><b># team</b><small>Who did what: handoffs between agents and their work, as it happens.</small></div>";
+    return;
+  }
+  const a = agentOf(channel);
+  head.style.setProperty("--c", a.color);
+  const info = document.createElement("div");
+  const b = document.createElement("b"); b.textContent = a.title;
+  const s = document.createElement("small");
+  s.textContent = channel === "jarvis" ? "Leads the team. Ask anything; he passes work to the right specialist."
+    : `${a.job} ${a.used_today != null ? "· " + a.used_today + " AI requests today" : ""}`;
+  info.append(b, s);
+  head.append(avatar(channel), info);
+  if (channel !== "jarvis") {
+    const sw = document.createElement("label"); sw.className = "switch"; sw.title = "Switch this agent on or off";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = a.enabled !== false;
+    cb.onchange = async () => { (await api.set_agent(channel, cb.checked)).forEach((x) => { TEAM[x.name] = x; }); renderRoster(Object.values(TEAM)); renderChannelHead(); };
+    sw.append(cb, document.createElement("i")); head.appendChild(sw);
+  }
+}
+
+async function selectChannel(id) {
+  channel = id;
+  $$("#channels .chan").forEach((b) => { b.classList.toggle("active", b.dataset.chan === id); if (b.dataset.chan === id) b.classList.remove("unread"); });
+  renderChannelHead();
+  const chat = $("#chat"); chat.innerHTML = "";
+  $("#ask-input").placeholder = id === "jarvis" || id === "team" ? "Ask Jarvis anything…  (Esc stops him)" : `Message ${agentOf(id).title} directly…`;
+  if (id === "team") {
+    (await api.team_feed()).forEach(addFeedItem);
+  } else {
+    (await api.chat_history(id)).forEach(addMessage);
+  }
+  $("#channel-body").scrollTop = 1e9;
+}
+
+function onMessage(m) {
+  const ch = m.channel || "jarvis";
+  if (channel === ch) addMessage(m);
+  else if (channel === "team" && m.role === "assistant" && m.agent && m.agent !== "jarvis") {
+    addFeedItem({ ts: Date.now() / 1000, kind: "agent", from: m.agent, text: m.text });
+  } else if (m.role === "assistant") {
+    const b = $(`#channels .chan[data-chan="${ch}"]`); if (b) b.classList.add("unread");
+  }
+  if (m.role === "assistant" && m.agent) loadTeam();
+}
+
+function onHandoff(h) {
+  if (channel === "team") addFeedItem({ ts: Date.now() / 1000, kind: "handoff", from: h.from, to: h.to, text: h.what, status: h.status });
+  if (TEAM[h.to]) { TEAM[h.to].status = h.status === "working" ? "working" : "idle"; renderRoster(Object.values(TEAM)); }
+  if (h.status === "working") $("#st-activity").textContent = `${agentOf(h.to).title} is working`;
+}
+
+function addFeedItem(f) {
+  const el = document.createElement("div"); el.className = "feed " + f.kind;
+  const from = f.from === "you" ? { title: "You", color: "#e8e8e8" } : agentOf(f.from);
+  el.style.setProperty("--c", from.color);
+  el.appendChild(f.from === "you" ? Object.assign(document.createElement("span"), { className: "avatar", textContent: "Y" }) : avatar(f.from));
+  const body = document.createElement("div");
+  const who = document.createElement("b"); who.textContent = from.title;
+  if (f.kind === "handoff") {
+    const to = agentOf(f.to), arrow = document.createElement("span"); arrow.className = "to"; arrow.style.setProperty("--c", to.color);
+    arrow.textContent = " → " + to.title;
+    who.appendChild(arrow);
+  }
+  const t = document.createElement("time"); t.textContent = fmtTime(f.ts);
+  const p = document.createElement("p");
+  p.textContent = f.kind === "quick" ? `Handled “${f.text}” (no AI needed)` : f.text;  // quick: the text is your request
+  if (f.status && f.status !== "open") { const s = document.createElement("em"); s.className = "status " + f.status; s.textContent = f.status; who.appendChild(s); }
+  body.append(who, t, p);
+  if (f.result) { const r = document.createElement("small"); r.textContent = "Result: " + f.result; body.appendChild(r); }
+  el.appendChild(body);
+  $("#chat").appendChild(el);
+  $("#channel-body").scrollTop = 1e9;
+}
+
 function addMessage(m) {
   const el = document.createElement("div");
   el.className = "msg " + m.role;
-  el.textContent = m.text;
+  if (m.role === "assistant") {
+    const a = agentOf(m.agent || "jarvis");
+    el.style.setProperty("--c", a.color);
+    const who = document.createElement("div"); who.className = "who";
+    who.append(avatar(m.agent || "jarvis", "xs"), document.createTextNode(a.title));
+    el.appendChild(who);
+  }
+  el.appendChild(document.createTextNode(m.text));
   if (m.sources && m.sources.length) {
     const src = document.createElement("div");
     src.className = "src";
@@ -100,7 +240,7 @@ function addMessage(m) {
   const chat = $("#chat");
   chat.appendChild(el);
   while (chat.children.length > 200) chat.firstChild.remove();
-  $("#tab-chat").scrollTop = 1e9;
+  $("#channel-body").scrollTop = 1e9;
 }
 
 function addActivity(a, append) {
@@ -476,7 +616,10 @@ function wire() {
   $("#ask").onsubmit = (e) => {
     e.preventDefault();
     const v = $("#ask-input").value.trim(); if (!v) return;
-    api.send_text(v); $("#ask-input").value = "";
+    $("#ask-input").value = "";
+    if (TEAM[channel] && channel !== "jarvis") { api.ask_agent(channel, v); return; }  // a direct chat with one agent
+    if (channel !== "jarvis") selectChannel("jarvis");  // from #team: the answer shows in Jarvis's chat
+    api.send_text(v);
   };
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") api.stop();
@@ -617,7 +760,35 @@ async function loadActivity() {
   list.forEach((a) => addActivity(a, true));
 }
 
-startOrb($("#orb"));
+// The core: 3D when the machine can (and low-power mode is off), the 2D orb otherwise.
+let coreStarted = false;
+function startCore() {
+  if (coreStarted || !api) return;  // needs the settings first
+  if (!S.ui_low_power) {
+    if (!window.startCore3D && !window.core3dFailed) return;  // the 3D module is still loading
+    if (window.startCore3D) {
+      try {
+        if (window.startCore3D($("#core-host"))) { coreStarted = true; $("#orb").classList.add("hidden"); return; }
+      } catch (e) { console.warn("3D core unavailable", e); }
+    }
+  }
+  coreStarted = true;  // low-power mode, no WebGL, or the module failed: the 2D orb
+  startOrb($("#orb"));
+}
+window.addEventListener("core3d-ready", startCore);
+setTimeout(() => { if (!coreStarted) { window.core3dFailed = true; startCore(); } }, 4000);  // module didn't load: 2D
+
+// Boot sequence: a short "systems coming online" screen while the dashboard loads.
+(() => {
+  const lines = ["Initialising core", "Loading voice and wake word", "Connecting the team: Scholar, Forge, Herald, Operator, Scout",
+    "Checking integrations", "All systems online"];
+  let i = 0;
+  const tick = setInterval(() => {
+    if (i < lines.length) { const d = document.createElement("div"); d.textContent = "› " + lines[i++]; $("#boot-lines").appendChild(d); }
+    else { clearInterval(tick); }
+  }, 260);
+  window.endBoot = () => setTimeout(() => $("#boot").classList.add("done"), Math.max(0, 1500 - performance.now()));
+})();
 
 setInterval(() => { $("#clock").textContent = new Date().toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" }); }, 1000);
 window.addEventListener("online", () => { $("#chip-net").className = "chip on"; $("#chip-net").textContent = "Online"; });
@@ -641,6 +812,11 @@ window.addEventListener("pywebviewready", async () => {
   $("#chip-wake").className = "chip " + (S.wake_word_enabled ? "on" : "off");
   if (init.ready.stt) $("#st-stt").textContent = `ready (${S.stt_model})`;
   init.history.forEach(addMessage);
+  await loadTeam();
+  renderChannels();
+  startCore();
+  window.endBoot();
+  setInterval(() => { if (!document.hidden) loadTeam(); }, 15000);
   init.pending.forEach(showApproval);
   renderMemories(init.memories);
   renderContacts(await api.whatsapp_contacts());

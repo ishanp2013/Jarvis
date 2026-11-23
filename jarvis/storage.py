@@ -72,6 +72,10 @@ class Store:
         cols = {r[1] for r in self._db.execute("PRAGMA table_info(activity)")}
         if "agent" not in cols:  # older databases: add the team column; old entries just have none
             self._db.execute("ALTER TABLE activity ADD COLUMN agent TEXT")
+        mcols = {r[1] for r in self._db.execute("PRAGMA table_info(messages)")}
+        if "agent" not in mcols:  # who answered, and which chat channel (jarvis, or a direct chat with one agent)
+            self._db.execute("ALTER TABLE messages ADD COLUMN agent TEXT")
+            self._db.execute("ALTER TABLE messages ADD COLUMN channel TEXT DEFAULT 'jarvis'")
         self._db.commit()
 
     # ---- what the agent has seen (so nothing is processed twice)
@@ -201,12 +205,18 @@ class Store:
             return self._db.execute(sql, args).fetchall()
 
     # conversation
-    def add_message(self, role, text):
-        self._exec("INSERT INTO messages(ts, role, text) VALUES(?,?,?)", (time.time(), role, redact(text)))
+    def add_message(self, role, text, agent=None, channel="jarvis"):
+        self._exec("INSERT INTO messages(ts, role, text, agent, channel) VALUES(?,?,?,?,?)",
+                   (time.time(), role, redact(text), agent, channel or "jarvis"))
 
-    def recent_messages(self, n):
-        rows = self._query("SELECT ts, role, text FROM messages ORDER BY id DESC LIMIT ?", (n,))
-        return [{"ts": r[0], "role": r[1], "text": r[2]} for r in reversed(rows)]
+    def recent_messages(self, n, channel=None):
+        """The last n messages, oldest first; channel limits it to one chat (None = all chats)."""
+        if channel:
+            rows = self._query("SELECT ts, role, text, agent, channel FROM messages WHERE COALESCE(channel, 'jarvis')=? "
+                               "ORDER BY id DESC LIMIT ?", (channel, n))
+        else:
+            rows = self._query("SELECT ts, role, text, agent, channel FROM messages ORDER BY id DESC LIMIT ?", (n,))
+        return [{"ts": r[0], "role": r[1], "text": r[2], "agent": r[3], "channel": r[4] or "jarvis"} for r in reversed(rows)]
 
     def clear_messages(self):
         self._exec("DELETE FROM messages")

@@ -601,7 +601,7 @@ class StreamingTests(unittest.TestCase):
         """The first sentences are spoken before the AI finishes, and 'sir' is added once at the end."""
         brain, events, spoken = make_brain()
 
-        def fake_llm(text):
+        def fake_llm(text, direct=None):
             for piece in ["The weather in Dubai is hot and sunny today. ", "Expect highs of thirty five. ", "Stay cool."]:
                 brain._emit_text(piece)
             return "Stay cool.", []
@@ -1480,6 +1480,87 @@ class SendAskTests(unittest.TestCase):
             self.assertTrue(SEND_ASK.search(s), s)
         for s in not_asks:
             self.assertFalse(SEND_ASK.search(s), s)
+
+
+class TeamChatTests(DelegationTests):
+    """The Discord-style team chat: answers are marked with the agent who gave them, and a direct chat with one
+    specialist skips Jarvis (one request fewer)."""
+
+    def setUp(self):
+        super().setUp()
+        self.values["stream_replies"] = False  # the fake server answers plain requests; nothing may reach the internet
+        p = mock.patch("jarvis.brain.providers.available", lambda: True)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_direct_chat_skips_the_leader(self):
+        self.replies = [self.say("Your CPU is fine.")]
+        self.brain.handle("how's my cpu doing", "text", "operator")
+        self.assertEqual(len(self.sent_bodies), 1)  # only Operator's request, no leader request
+        self.assertIn("Operator", self.sent_bodies[0]["messages"][0]["content"])
+        msgs = self.brain.store.recent_messages(5, "operator")
+        self.assertEqual([(m["role"], m["agent"]) for m in msgs], [("user", None), ("assistant", "operator")])
+        self.assertEqual(self.brain.store.recent_messages(5, "jarvis"), [])  # kept out of the main chat
+        self.assertEqual(self.brain.store.handoffs()[0]["from"], "you")
+
+    def test_delegated_answers_are_marked_with_the_specialist(self):
+        self.replies = [self.call("ask_scout", request="who won the 2022 world cup"), self.say("Argentina won it.")]
+        self.brain.handle("who won the 2022 world cup", "text")
+        last = self.brain.store.recent_messages(1, "jarvis")[0]
+        self.assertEqual((last["role"], last["agent"]), ("assistant", "scout"))
+        kinds = [k for k, _ in self.events if k == "handoff"]
+        self.assertEqual(len(kinds), 2)  # "working" then "done", for the live team feed
+
+    def test_unknown_channel_falls_back_to_jarvis(self):
+        self.replies = [self.say("Hello there.")]
+        self.brain.handle("tell me something nice", "text", "nobody")
+        self.assertEqual(self.brain.store.recent_messages(5, "jarvis")[-1]["agent"], "jarvis")
+
+
+class TeamApiTests(unittest.TestCase):
+    def test_team_view_and_switch(self):
+        from jarvis import app as appmod
+        j = mock.Mock()
+        j.store = Store(Path(tempfile.mkdtemp()) / "t.db")
+        j.brain._working, j.worker.current, j.agent.running, j.state = "scout", None, False, "idle"
+        j.store.log("agent", "Prepared deck", "forge")
+        api = appmod.Api(j)
+        values = {}
+        with mock.patch.object(settings, "get", lambda k, d=None: values.get(k, settings._data.get(k, d))), \
+                mock.patch.object(settings, "update", lambda v: values.update(v)):
+            team = {a["name"]: a for a in api.team()}
+            self.assertEqual(team["scout"]["status"], "working")
+            self.assertEqual(team["forge"]["last"], "Prepared deck")
+            self.assertEqual(team["forge"]["done_today"], 1)
+            api.set_agent("herald", False)
+            self.assertFalse(values["agent_herald_on"])
+            api.set_agent("jarvis", False)  # the leader can't be switched off
+            self.assertNotIn("agent_jarvis_on", values)
+        feed = api.team_feed()
+        self.assertEqual(feed[-1]["from"], "forge")
+
+
+class WebFileTypeTests(unittest.TestCase):
+    def test_scripts_are_served_as_javascript(self):
+        import http.client
+        from http.server import ThreadingHTTPServer
+        from jarvis import web
+        ui = Path(__file__).resolve().parent.parent / "ui"
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), None)
+        port = srv.server_address[1]
+        srv.RequestHandlerClass = web.make_handler(object(), ui.resolve(), port, web.Hub())
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            for path, ctype in (("/core3d.js", "text/javascript"), ("/vendor/three.module.min.js", "text/javascript"),
+                                ("/vendor/fonts/orbitron-700.woff2", "font/woff2"), ("/app.css", "text/css")):
+                c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                c.request("GET", path, headers={"Host": f"127.0.0.1:{port}"})
+                r = c.getresponse()
+                r.read()
+                self.assertEqual((r.status, r.getheader("Content-Type")), (200, ctype), path)
+        finally:
+            srv.shutdown()
+            srv.server_close()
 
 
 if __name__ == "__main__":

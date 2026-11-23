@@ -81,10 +81,20 @@ function onEvent(kind, d) {
 }
 
 // ------------------------------------------------------------ chat
+const AGENT_COLOURS = { jarvis: "#ffb040", scholar: "#6fb3ff", forge: "#ff8a5c", herald: "#c58cff", operator: "#4fe3a1", scout: "#ffd84f" };
+
 function addMessage(m) {
+  if (m.channel && m.channel !== "jarvis") return;  // the phone shows the main chat with Jarvis
   const div = document.createElement("div");
   div.className = "msg " + m.role;
-  div.textContent = m.text;
+  if (m.role === "assistant") {  // which team member answered
+    const name = m.agent || "jarvis";
+    div.style.setProperty("--c", AGENT_COLOURS[name] || "#ffb040");
+    const who = document.createElement("div"); who.className = "who";
+    who.append(document.createElement("i"), document.createTextNode(name[0].toUpperCase() + name.slice(1)));
+    div.appendChild(who);
+  }
+  div.appendChild(document.createTextNode(m.text));
   (m.sources || []).forEach((s, i) => {
     const a = document.createElement("a");
     a.href = s.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = `[${i + 1}] ${s.title}`;
