@@ -429,6 +429,28 @@ _AGENT = [None]  # the running agent, for the task tools above
 _WORKER = [None]  # the running worker, for prepare_work
 
 
+# ---- Jarvis's team: the leader passes work to the specialist who owns the right tools (see jarvis/team)
+def _ask_tool(name, when):
+    @tool(f"ask_{name}", f"Ask {name.title()} to handle it. Use for: {when}. Pass the request in plain words with every "
+          "detail the user gave (names, dates, amounts). Their answer goes straight to the user.",
+          {"request": ("string", "what to do, in plain words, with all details")}, ["request"])
+    def _delegate(request):
+        raise RuntimeError("delegation is handled by the brain")  # replaced in Brain._run_tool
+    return _delegate
+
+
+_ask_tool("scholar", "school, assignments, homework, tests, deadlines, the user's task list and reminders, Google "
+          "Classroom, what's on the calendar")
+_ask_tool("forge", "making a file: presentations, slides, documents, reports, essays, study notes, revision sheets, "
+          "spreadsheets, summarising a PDF")
+_ask_tool("herald", "email, WhatsApp, Discord, Slack and Telegram: reading, writing, replying and sending messages; "
+          "adding calendar events; opening GitHub issues; adding notes to Notion")
+_ask_tool("operator", "the laptop and phone: opening, closing and arranging apps, finding files, pressing buttons, "
+          "music, YouTube, games, smart home, volume, what's on screen, the clipboard, restart or shutdown")
+_ask_tool("scout", "looking things up: facts, news, anything recent or uncertain, reading web pages, weather, "
+          "Google Drive, Notion pages, GitHub")
+
+
 @tool("power_laptop", "Restart or shut down the laptop after a 30-second countdown (the user confirms first)",
       {"action": ("string", "restart|shutdown")}, ["action"], approval="voice")
 def t_power(action):
@@ -461,7 +483,14 @@ SITES = {"google classroom": "https://classroom.google.com", "classroom": "https
 CLIP_RE = re.compile(r"^(summari[sz]e|translate|explain|fix|proofread|rewrite|shorten|improve|reply to|answer|check|"
                      r"correct|simplify)(.*?) (?:what i(?:'ve)? (?:just )?copied|my clipboard|the clipboard|the copied text|"
                      r"what's (?:in|on) my clipboard)(.*)$")
-SEND_ASK = re.compile(r"\b(send|reply|respond|message|text|tell|post|email|e-mail|mail|dm|write (?:to|back)|let \w+ know|whatsapp|open an issue|file an issue|create an issue)\b", re.I)
+# The user's words ask to send something: a sending verb, or "email/text/message/tell <someone>". Just mentioning
+# email ("read my latest email", "what did she text me") doesn't count, so a message can't trick Jarvis into sending.
+SEND_ASK = re.compile(
+    r"\b(?:send|reply|respond|forward|write (?:to|back)|let \w+ know|open an issue|file an issue|create an issue)\b"
+    r"|\bpost\s+(?!office\b)\S"
+    r"|\b(?:email|e-mail|mail|message|text|tell|dm|whatsapp)\s+(?!me\b|us\b|my (?:e-?mails?|inbox|mail|messages?|texts?)\b)"
+    r"(?!(?:is|was|are|were|from|about|said|says|please|now|today|again|and|or|for|in|on|too|first|then|inbox|"
+    r"account|address|app|notifications?|messages?|emails?)\b)\w+", re.I)
 PERSONAL_RE = re.compile(r"\b(e-?mails?|inbox|mail|calendar|schedule|meetings?|appointments?|events?|tasks?|to ?do|remind|"
                          r"discord|announcements?|notion|drive|slack|telegram)\b")
 
@@ -493,6 +522,7 @@ class Brain:
         self.worker = None          # set by the app: prepares presentations, documents and notes
         self.briefing_fn = None     # set by the app: the welcome-back briefing, as text
         self.acting = None          # the team member acting now; None = Jarvis acting for the whole team
+        self._final = []            # answers from specialists during one request
 
     # ---------------- approvals
     def _request_approval(self, name, args):
@@ -559,10 +589,13 @@ class Brain:
         self.emit("state", {"state": "thinking"})
         stream = None
         try:
+            self._qowner = "jarvis"
             reply, sources = self._quick(text), []
             if reply is None:
                 stream = self._start_stream(gen)
                 reply, sources = self._llm(text)
+            elif reply:  # answered without AI: note which team member's job it was
+                self.store.log("quick", text[:120], self._qowner)
         except RuntimeError as e:  # tools raise these with a message meant for the user ("GitHub isn't connected…")
             reply, sources = str(e), []
         except Exception as e:
@@ -658,6 +691,7 @@ class Brain:
     def _quick(self, text):
         t = text.lower().strip().rstrip(".!?")
         m = lambda p: re.match(p, t)
+        self._qowner = "jarvis"
 
         # confirmations for pending cards
         if self.pending and m(r"^(yes|yeah|yep|confirm|do it|go ahead|sure|approve)\b"):
@@ -685,6 +719,7 @@ class Brain:
         t = re.sub(r"^(?:tell me|show me|let me know|check) (?=(?:what|who|how|which|if|whether)\b)", "", t)
         t = re.sub(r"\b(?:currently|right now) ?", "", t).strip()
         t = re.sub(r",? and (?:leave|keep) it (?:running|open)$", "", t)
+        self._qowner = "operator"
         # restart / shut down: always asks first, then a 30-second countdown that "cancel shutdown" stops
         if r := m(r"^(restart|reboot|shut ?down|power off|switch off|turn off)(?: my| the)?(?: laptop| computer| pc)$") \
                 or m(r"^(restart|reboot|shut ?down)$"):
@@ -705,25 +740,31 @@ class Brain:
                 return "Here's your laptop screen."
             win.save_screenshot()
             return "Screenshot saved in your Pictures, Screenshots folder."
+        self._qowner = "herald"
         # "open discord and check my class group"
         if (r := m(r"^(?:open discord and )?(?:check|read|show me|what'?s new in|catch me up on) (?:my |the )?(.+?) "
                    r"(?:group|channel|server|chat|gc)(?: on discord)?$")) and "discord" in t:
             if t.startswith("open discord"):
                 win.open_app("discord")
             return self._discord_group(r.group(1))
+        self._qowner = "operator"
         # the phone (through KDE Connect)
         if (reply := self._phone_command(t)) is not None:
             return reply
+        self._qowner = "jarvis"
         # the briefing: "what did I miss", "brief me", "what's happening today"
         if self.briefing_fn and (m(r"^(?:what did i miss|what have i missed|catch me up|brief me|(?:give me |read me )?(?:my |a |the )?"
                                    r"(?:daily |morning )?briefing|what'?s (?:happening|on|new) today|what'?s new|"
                                    r"what happened while i was (?:away|out|at school|gone))\??$")):
             return self.briefing_fn()
+        self._qowner = "scholar"
         # the task list and the background agent
         if self.agent and (reply := self._task_command(t)) is not None:
             return reply
+        self._qowner = "forge"
         if self.worker and (reply := self._work_command(t, text)) is not None:
             return reply
+        self._qowner = "jarvis"
         # routines: "when I say focus mode, close discord and open notepad"
         if name := routines.match(t):
             return self._run_routine(name)
@@ -743,6 +784,7 @@ class Brain:
             on = (r.group(1) or r.group(2) or "on") in ("on", "enable", "start")
             if self.set_game_mode:
                 return self.set_game_mode(on)
+        self._qowner = "operator"
         # screen: "what's on my screen", "explain this error"
         if r := SCREEN_RE.match(t):
             if not self._llm_available():
@@ -794,11 +836,13 @@ class Brain:
                     return home.control(dev, action)
             if r3 and home.find(r3.group(1)):
                 return home.control(r3.group(1), "brightness", int(r3.group(2)))
+        self._qowner = "herald"
         if r := m(r"^(?:add|save|put|write|note) (.+?) (?:to|in|into) notion$"):
             return notion.add_note(r.group(1))
         if m(r"^(?:check |read |any )?(?:my |new )?telegram(?: messages)?$"):
             msgs = telegram.updates(5)
             return ("On Telegram: " + " ".join(f"{x['from']}: {x['text'][:150]}." for x in msgs)) if msgs else "No new Telegram messages."
+        self._qowner = "operator"
         if r := m(r"^(?:open|launch|start|run|fire up) (?:the )?(.+?)(?: app| application| please)?$"):
             target = r.group(1)
             if re.search(r"\.(com|org|net|io|dev|ai|co|uk|gg|tv|edu|gov)\b|^www\.", target):
@@ -853,12 +897,14 @@ class Brain:
             return files.find(q)
         if m(r"^lock (my |the )?(pc|computer|screen)"):
             return win.lock_pc()
+        self._qowner = "jarvis"
         if r := re.match(r"^remember (?:that )?(.+)", text.strip().rstrip(".!?"), re.I):
             self.store.remember(r.group(1))
             return "I'll remember that."
         if m(r"^what do you remember"):
             mem = [x["text"] for x in self.store.memories()]
             return ("I remember: " + "; ".join(mem[-8:]) + ".") if mem else "Nothing yet."
+        self._qowner = "herald"
         if wa := whatsapp.parse(text):
             if settings.get("confirm_sends", False):
                 return whatsapp.draft_to(*wa)
@@ -867,6 +913,7 @@ class Brain:
         if m(r"^(?:check|read)(?: my)? whatsapp") or m(r".*whatsapp messages"):
             return ("WhatsApp doesn't offer an official way for apps to read personal chats, so I can't read them. "
                     "I can send messages to your saved contacts through the WhatsApp app.")
+        self._qowner = "scout"
         # weather (free, no key): "what's the weather", "weather in dubai", "will it rain tomorrow"
         if r := m(r"^(?:what(?:'s| is) the |how(?:'s| is) the )?(?:weather|forecast|temperature)(?: like)?(?: (?:in|for|at) (.+?))?(?: (?:today|tomorrow|now|right now))?$") \
                 or m(r"^(?:will|is) it (?:going to )?(?:rain|snow|be (?:hot|cold|sunny))(?: (?:in|at) (.+?))?(?: (?:today|tomorrow))?$"):
@@ -878,6 +925,7 @@ class Brain:
         if m(r"^(?:show |list |what are )?(?:my )?github (?:repos|repositories)$"):
             repos = github.my_repos()
             return "Your repositories: " + ", ".join(f"{r['name']} ({r['stars']} stars)" for r in repos[:8]) + "."
+        self._qowner = "herald"
         # Private mode keeps personal data (mail, calendar, tasks, Discord) away from cloud AI.
         if self._private_cloud() and PERSONAL_RE.search(t):
             return self._offline_fallback(t)
@@ -1097,15 +1145,26 @@ class Brain:
             user += (" Private mode is on, so the user's email, calendar, tasks, Discord, GitHub, Notion, Google Drive, Slack, "
                      "Telegram and phone notifications are hidden from you. If they ask about those, say private mode keeps them away from online AI, "
                      "and that they can turn it off in Settings, or use a simple command like 'check my email'.")
-        return PERSONA.format(name=settings["assistant_name"], now=dt.datetime.now().strftime("%A %d %B %Y, %H:%M"),
-                              user=user, memories=mems)
+        now = dt.datetime.now().strftime("%A %d %B %Y, %H:%M")
+        a = team.agent(self.acting) if self.acting else None
+        if a and a.name != "jarvis":  # a specialist: its own instructions, plus who it works for
+            return (f"{a.instructions}\nYou work for {settings['assistant_name']}, the user's personal assistant, who passed "
+                    f"you this request. Current local time: {now}. {user}\nThings the user asked to be remembered:\n{mems}")
+        text = PERSONA.format(name=settings["assistant_name"], now=now, user=user, memories=mems)
+        if a:  # the leader
+            text += ("\n\nYou lead a team. Answer greetings, general knowledge and opinions yourself. For anything that needs "
+                     "doing or looking up, pass it to the right specialist with an ask_ tool: Scholar (school, tasks, deadlines), "
+                     "Forge (making files), Herald (messages and email), Operator (laptop and phone), Scout (research and "
+                     "facts). Their answer reaches the user directly.")
+        return text
 
     def _tools(self):
-        """The tools the AI may use right now: the acting team member's own (all of them while Jarvis acts
-        for the whole team), minus personal-data tools in private mode."""
+        """The tools the AI may use right now: the acting team member's own, minus personal-data tools in private
+        mode. With the team switched off (acting None), one AI gets every tool except the delegation ones."""
         allowed = team.tools_of(self.acting) if self.acting else None
         return [t for n, t in TOOLS.items()
-                if not (self._private_cloud() and n in PERSONAL_TOOLS) and (allowed is None or n in allowed)]
+                if not (self._private_cloud() and n in PERSONAL_TOOLS)
+                and (n in allowed if allowed is not None else not n.startswith("ask_"))]
 
     def _auto_ok(self, name):
         """True when a tool that normally asks first may run at once: confirmations are off for it, and for
@@ -1137,6 +1196,8 @@ class Brain:
                 return {"error": str(e)}
         if name == "game_mode":
             return self.set_game_mode(bool(args.get("on", True))) if self.set_game_mode else {"error": "not available"}
+        if name.startswith("ask_"):
+            return self._delegate(name[4:], str(args.get("request") or self.request), sources)
         self.emit("activity", {"text": f"Using {name}"})
         self.store.log("tool", f"{name} {json.dumps(args)[:200]}", owner)
         if t["approval"] and not self._auto_ok(name):
@@ -1157,13 +1218,68 @@ class Brain:
     def _history(self):
         return self.store.recent_messages(settings["history_turns"] * 2)[:-1]  # last one is the current user turn
 
+    def _provider_loop(self):
+        p = providers.current()
+        return {"gemini": self._gemini, "anthropic": self._anthropic, "openai": self._openai_compat,
+                "ollama": self._ollama}[p["kind"]]
+
+    def _delegate(self, name, request, sources):
+        """Jarvis passes a request to a specialist. It works with only its own tools and instructions, and its
+        answer goes straight to the user (Jarvis doesn't spend another request rewording it)."""
+        a = team.agent(name)
+        if not a or name == "jarvis":
+            return {"error": f"There's no specialist called {name}."}
+        if not a.enabled:
+            return {"error": f"{a.title} is switched off in the Team settings. Tell the user."}
+        if a.personal and self._private_cloud():
+            return {"error": f"Private mode keeps {a.title}'s work (personal messages and school data) away from online AI. "
+                             "Tell the user they can use a simple command like 'check my email', or turn private mode off."}
+        hid = self.store.add_handoff("jarvis", name, request)
+        self.store.log("handoff", f"Jarvis asked {a.title}: {request[:150]}", "jarvis")
+        self.emit("activity", {"text": f"Asking {a.title}", "agent": name})
+        prompt = request if request.strip() == (self.request or "").strip() else \
+            f"{request}\n\n(The user's own words were: \"{self.request}\")"
+        if name == "scout":
+            prompt += self._research_first(request, sources)
+        prev, self.acting = self.acting, name
+        try:
+            reply = (self._provider_loop()(prompt, sources) or "").strip()
+        except Exception as e:
+            self.store.update_handoff(hid, "failed", str(e))
+            raise
+        finally:
+            self.acting = prev
+        self.store.update_handoff(hid, "done", reply)
+        self.store.log("agent", f"{a.title}: {reply[:200]}", name)
+        self._final.append(reply or "Done.")
+        return {"answer_from": a.title, "answer": reply, "note": "This answer has been given to the user already."}
+
+    def _research_first(self, query, sources):
+        """Scout gets real search results before it answers (free AI models otherwise tend to answer from memory and
+        name sources they never opened). The search itself costs no AI request."""
+        try:
+            results = web.search(query, max_results=5)
+        except Exception as e:
+            log.warning("research-first search failed: %s", e)
+            return "\n\n(The automatic web search failed; use web_search yourself before answering.)"
+        if not results:
+            return "\n\n(The automatic web search found nothing; try web_search with other words.)"
+        sources.extend({"title": r["title"], "url": r["url"]} for r in results[:4] if r.get("url"))
+        self.store.log("tool", f"web_search (automatic) {query[:120]}", "scout")
+        lines = "\n".join(f"[{i}] {r['title']} ({r['url']}): {r['snippet'][:300]}" for i, r in enumerate(results, 1))
+        return ("\n\nWeb search results for this request (fetched just now):\n" + lines +
+                "\n\nAnswer only from these results, or open one with read_webpage for detail. Name the source you used. "
+                "If they don't answer the question, say so.")
+
     def _llm(self, text):
         p = providers.current()
         sources = []
+        self._final = []  # specialists' answers, which go to the user as they are
+        prev = self.acting
+        if self.acting is None and settings.get("team_mode", True):
+            self.acting = "jarvis"  # the leader: talks, and passes work to the team
         try:
-            run = {"gemini": self._gemini, "anthropic": self._anthropic, "openai": self._openai_compat,
-                   "ollama": self._ollama}[p["kind"]]
-            reply = run(text, sources)
+            reply = self._provider_loop()(text, sources)
         except Exception as e:
             msg = str(e)
             log.warning("LLM error: %s", msg)
@@ -1180,6 +1296,8 @@ class Brain:
             if isinstance(e, (httpx.ConnectError, httpx.TimeoutException)) or "getaddrinfo" in msg:
                 return "I can't reach the AI service. Check your internet connection.", []
             return f"The AI request failed: {msg[:150]}", []
+        finally:
+            self.acting = prev
         seen, uniq = set(), []
         for s in sources:
             if s["url"] not in seen:
@@ -1232,6 +1350,8 @@ class Brain:
                 out = self._run_tool(c.name, dict(c.args or {}), sources)
                 out_parts.append(types.Part.from_function_response(name=c.name, response={"result": json.loads(json.dumps(out, default=str))}))
             contents.append(types.Content(role="user", parts=out_parts))
+            if self._final and self.acting == "jarvis":  # a specialist answered: that's the reply
+                return " ".join(self._final)
         return "I got a bit tangled up there. Could you rephrase?"
 
     def _ollama(self, text, sources):
@@ -1267,6 +1387,8 @@ class Brain:
             for c in msg["tool_calls"]:
                 out = self._run_tool(c["function"]["name"], c["function"].get("arguments") or {}, sources)
                 msgs.append({"role": "tool", "content": json.dumps(out, default=str)[:6000]})
+            if self._final and self.acting == "jarvis":  # a specialist answered: that's the reply
+                return " ".join(self._final)
         return "I got a bit tangled up there. Could you rephrase?"
 
     def _openai_tools(self):
@@ -1346,6 +1468,8 @@ class Brain:
                     args = {}
                 out = self._run_tool(c["function"]["name"], args, sources)
                 msgs.append({"role": "tool", "tool_call_id": c["id"], "content": json.dumps(out, default=str)[:6000]})
+            if self._final and self.acting == "jarvis":  # a specialist answered: that's the reply
+                return " ".join(self._final)
         return "I got a bit tangled up there. Could you rephrase?"
 
     def _anthropic_extra(self, model):
@@ -1395,6 +1519,8 @@ class Brain:
                 results.append({"type": "tool_result", "tool_use_id": b.id, "content": json.dumps(out, default=str)[:6000],
                                 "is_error": isinstance(out, dict) and "error" in out})
             messages.append({"role": "user", "content": results})
+            if self._final and self.acting == "jarvis":  # a specialist answered: that's the reply
+                return " ".join(self._final)
         return "I got a bit tangled up there. Could you rephrase?"
 
     # ---------------- screen understanding

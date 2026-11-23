@@ -73,6 +73,7 @@ DEFAULTS = {
     "agent_output_dir": "",          # where prepared work is saved; empty = Documents\School Projects
     "classroom_enabled": False,
     # Jarvis's team: each agent can be switched off and has a share of the day's AI requests
+    "team_mode": True,               # Jarvis passes work to specialists (off = one AI with every tool, as before)
     "agent_jarvis_on": True, "agent_jarvis_budget": 15,
     "agent_scholar_on": True, "agent_scholar_budget": 10,
     "agent_forge_on": True, "agent_forge_budget": 15,

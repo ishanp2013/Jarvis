@@ -300,7 +300,7 @@ class ProviderTests(unittest.TestCase):
         self.addCleanup(self.patch.stop)
 
     def use(self, provider):
-        values = {"llm_provider": provider, "private_mode": False}
+        values = {"llm_provider": provider, "private_mode": False, "team_mode": False}  # each provider's format, one AI
         p = mock.patch.object(settings, "get", lambda k, d=None: values.get(k, settings._data.get(k, d)))
         p.start()
         self.addCleanup(p.stop)
@@ -1279,8 +1279,8 @@ class TeamTests(unittest.TestCase):
                                                                   "task_add", "calendar_upcoming"})
             blocked = [a for a in brain.store.activity(10) if a["kind"] == "blocked"]
             self.assertEqual(blocked[0]["agent"], "scholar")
-            brain.acting = None  # Jarvis acting for the whole team: everything works as before
-            self.assertEqual(len(brain._tools()), len(TOOLS))
+            brain.acting = None  # team switched off: one AI with every tool except the delegation ones
+            self.assertEqual(len(brain._tools()), len([n for n in TOOLS if not n.startswith("ask_")]))
 
     def test_tool_calls_are_tagged_with_their_owner(self):
         brain, _, _ = make_brain()
@@ -1324,6 +1324,162 @@ class TeamStorageTests(unittest.TestCase):
         Worker(store, lambda *a, **k: None)._close_handoff({"title": "Science presentation"}, "done", "Deck.pptx")
         h = store.handoffs()[0]
         self.assertEqual((h["id"], h["from"], h["to"], h["status"], h["result"]), (hid, "scholar", "forge", "done", "Deck.pptx"))
+
+
+class DelegationTests(unittest.TestCase):
+    """Jarvis passes work to specialists. A fake AI server answers in order; we check who saw which tools and how
+    many AI requests each path costs (quick: 0, chat: 1, delegated: 2, delegated with a tool: 3)."""
+
+    def setUp(self):
+        import json
+        self.json = json
+        self.brain, self.events, _ = make_brain()
+        self.ran, self.sent_bodies, self.replies = [], [], []
+        values = {"llm_provider": "groq", "private_mode": False, "team_mode": True, "confirm_sends": False}
+        self.values = values
+        for p in (mock.patch.object(settings, "get", lambda k, d=None: values.get(k, settings._data.get(k, d))),
+                  mock.patch("jarvis.brain.get_secret", lambda name: "test-key"),
+                  mock.patch.dict(TOOLS["system_info"], fn=lambda: self.ran.append("system_info") or {"cpu_percent": 5}),
+                  mock.patch.object(ai.providers, "is_cloud", lambda: True),
+                  mock.patch("jarvis.brain.web.search", lambda q, max_results=5: [
+                      {"title": "2022 FIFA World Cup final", "url": "https://en.wikipedia.org/wiki/2022_FIFA_World_Cup_final",
+                       "snippet": "Argentina won the final against France on penalties."}])):
+            p.start()
+            self.addCleanup(p.stop)
+        ai.USAGE_FILE = Path(tempfile.mkdtemp()) / "usage.json"
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            import copy
+            self.sent_bodies.append(copy.deepcopy(json))  # as sent (Jarvis keeps adding to the same list)
+            reply = self.replies.pop(0)
+            return mock.Mock(status_code=200, json=lambda: {"choices": [{"message": reply}]})
+        p = mock.patch("jarvis.brain.httpx.post", fake_post)
+        p.start()
+        self.addCleanup(p.stop)
+
+    @staticmethod
+    def call(name, **args):
+        import json
+        return {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}
+
+    @staticmethod
+    def say(text):
+        return {"role": "assistant", "content": text}
+
+    def tools_seen(self, i):
+        return {t["function"]["name"] for t in self.sent_bodies[i]["tools"]}
+
+    def test_chat_costs_one_request(self):
+        self.replies = [self.say("Canberra, sir.")]
+        self.brain.request = "what's the capital of australia"
+        reply, _ = self.brain._llm("what's the capital of australia")
+        self.assertEqual(reply, "Canberra, sir.")
+        self.assertEqual(ai.usage()["total"], 1)
+        self.assertEqual(self.tools_seen(0), {"game_mode", "ask_scholar", "ask_forge", "ask_herald", "ask_operator", "ask_scout"})
+
+    def test_delegated_with_a_tool(self):
+        self.replies = [self.call("ask_operator", request="check the cpu"), self.call("system_info"), self.say("CPU is at 5%.")]
+        self.brain.request = "how's my cpu doing"
+        reply, _ = self.brain._llm("how's my cpu doing")
+        self.assertEqual(reply, "CPU is at 5%.")  # the specialist's answer, unreworded
+        self.assertEqual(self.ran, ["system_info"])
+        self.assertEqual(len(self.sent_bodies), 3)  # leader 1 + Operator 2, no extra leader round
+        self.assertIn("system_info", self.tools_seen(1))
+        self.assertFalse({"email_compose", "ask_scout"} & self.tools_seen(1))  # Operator only sees its own tools
+        self.assertIn("Operator", self.sent_bodies[1]["messages"][0]["content"])  # its own instructions
+        self.assertIn("The user's own words were", self.sent_bodies[1]["messages"][-1]["content"])
+        self.assertEqual(ai.usage()["by_agent"], {"jarvis": 1, "operator": 2})
+        h = self.brain.store.handoffs()[0]
+        self.assertEqual((h["from"], h["to"], h["status"], h["result"]), ("jarvis", "operator", "done", "CPU is at 5%."))
+        self.assertIsNone(self.brain.acting)
+
+    def test_delegated_answer_costs_two(self):
+        self.replies = [self.call("ask_scout", request="who won the 2022 world cup"), self.say("Argentina won it.")]
+        self.brain.request = "who won the 2022 world cup"
+        reply, sources = self.brain._llm("who won the 2022 world cup")
+        self.assertEqual(reply, "Argentina won it.")
+        self.assertEqual(ai.usage()["total"], 2)
+        scout_prompt = self.sent_bodies[1]["messages"][-1]["content"]
+        self.assertIn("Argentina won the final against France", scout_prompt)  # searched before answering
+        self.assertIn("Answer only from these results", scout_prompt)
+        self.assertEqual(sources[0]["url"], "https://en.wikipedia.org/wiki/2022_FIFA_World_Cup_final")
+
+    def test_specialist_cannot_use_another_agents_tool(self):
+        sent = []
+        self.replies = [self.call("ask_scout", request="email Bob"), self.call("email_compose", to="b@x.y", subject="s", body="b"),
+                        self.say("I couldn't send that.")]
+        self.brain.request = "email bob that I'm late"
+        with mock.patch.dict(TOOLS["email_compose"], fn=lambda **k: sent.append(k) or "sent"):
+            self.brain._llm("email bob that I'm late")
+        self.assertEqual(sent, [])
+        tool_msg = [m for m in self.sent_bodies[2]["messages"] if m["role"] == "tool"][0]
+        self.assertIn("belongs to herald", tool_msg["content"])
+
+    def test_herald_sends_only_when_the_user_asked(self):
+        sent = []
+        with mock.patch.dict(TOOLS["email_compose"], fn=lambda **k: sent.append(k) or "Email sent."):
+            # asked in the user's own words: sends
+            self.replies = [self.call("ask_herald", request="email ms rao that I'll be late"),
+                            self.call("email_compose", to="rao@school.edu", subject="Late", body="I'll be late."), self.say("Sent.")]
+            self.brain.request = "email ms rao that I'll be late"
+            self.brain._llm(self.brain.request)
+            self.assertEqual(len(sent), 1)
+            # not asked (the AI decided to while reading mail): an approval card instead
+            self.replies = [self.call("ask_herald", request="read my latest email"),
+                            self.call("email_compose", to="x@y.z", subject="Fwd", body="..."), self.say("Card shown.")]
+            self.brain.request = "read my latest email"
+            self.brain._llm(self.brain.request)
+            self.assertEqual(len(sent), 1)
+            self.assertEqual(list(self.brain.pending.values())[-1]["tool"], "email_compose")
+
+    def test_switched_off_and_private(self):
+        self.values["agent_scout_on"] = False
+        self.replies = [self.call("ask_scout", request="news"), self.say("Scout is switched off at the moment.")]
+        self.brain.request = "any news"
+        self.assertIn("switched off", self.brain._llm("any news")[0])
+        tool_msg = [m for m in self.sent_bodies[1]["messages"] if m["role"] == "tool"][0]
+        self.assertIn("switched off", tool_msg["content"])
+        self.values["private_mode"] = True  # Herald handles personal messages: kept off online AI
+        self.replies = [self.call("ask_herald", request="read my email"), self.say("Private mode is on.")]
+        self.brain._llm("read my email")
+        tool_msg = [m for m in self.sent_bodies[-1]["messages"] if m["role"] == "tool"][0]
+        self.assertIn("Private mode", tool_msg["content"])
+
+    def test_team_off_is_the_old_single_ai(self):
+        self.values["team_mode"] = False
+        self.replies = [self.call("system_info"), self.say("CPU is at 5%.")]
+        self.assertEqual(self.brain._llm("how's my cpu")[0], "CPU is at 5%.")
+        self.assertNotIn("ask_operator", self.tools_seen(0))
+        self.assertIn("system_info", self.tools_seen(0))
+
+
+class QuickOwnerTests(RouterBase):
+    def test_quick_commands_are_logged_under_their_agent(self):
+        from jarvis.tools import weather
+        from jarvis.agent.core import Agent
+        self.brain.agent = Agent(self.brain.store, lambda *a, **k: None)
+        with mock.patch.object(weather, "forecast", lambda place: "Sunny."):
+            for text, owner in (("open notepad", "operator"), ("what's due", "scholar"), ("what's the weather", "scout"),
+                                ("remember that my locker is 42", "jarvis"), ("volume up", "operator")):
+                self.ask(text)
+                last = [a for a in self.brain.store.activity(5) if a["kind"] == "quick"][0]
+                self.assertEqual((last["text"], last["agent"]), (text, owner), text)
+
+
+class SendAskTests(unittest.TestCase):
+    def test_what_counts_as_asking_to_send(self):
+        from jarvis.brain import SEND_ASK
+        asks = ["email ms rao that I'll be late", "send hi to sam on whatsapp", "reply to the trip email", "tell Bob I'm here",
+                "text mum I'm on my way", "post 'build is green' in #dev", "let sam know I'm late", "forward that to my teacher",
+                "write back to her", "message the class group saying hi", "whatsapp sam: see you", "check my email and reply to Bob"]
+        not_asks = ["read my latest email", "check my email", "any new messages", "what did my teacher text me", "tell me a joke",
+                    "do I have any unread emails", "summarise my inbox", "who messaged me recently", "is there mail from school",
+                    "what's in my messages", "read my texts", "the email from Ms Rao", "check my email please"]
+        for s in asks:
+            self.assertTrue(SEND_ASK.search(s), s)
+        for s in not_asks:
+            self.assertFalse(SEND_ASK.search(s), s)
 
 
 if __name__ == "__main__":

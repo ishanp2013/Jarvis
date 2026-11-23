@@ -28,13 +28,15 @@ AGENTS = {
         "need the user's confirmation. " + _COMMON, "#4fe3a1", "chip", (READ, DEVICE), 2),
     "scout": Specialist(
         "scout", "Scout", "Looks things up: web research with sources, news, weather, Google Drive, Notion and GitHub.",
-        "You are Scout, Jarvis's researcher. Use web_search or web_news for anything recent or uncertain, read pages when "
-        "needed, and say which source you used. " + _COMMON, "#ffd84f", "compass", (READ,), 5),
+        "You are Scout, Jarvis's researcher. Your own knowledge may be out of date, so for anything recent, 'latest' or "
+        "'current', search without guessing a year (use the current date you're given). Before stating a fact, open the "
+        "most reliable result with read_webpage and answer only with what that page says; if sources disagree or don't "
+        "say, tell the user plainly. Name the source you used. " + _COMMON, "#ffd84f", "compass", (READ,), 5),
 }
 
 OWNER = {}
 for _agent, _names in {
-    "jarvis": ["game_mode"],
+    "jarvis": ["game_mode", "ask_scholar", "ask_forge", "ask_herald", "ask_operator", "ask_scout"],
     "scholar": ["my_tasks", "my_task_add", "my_task_done", "tasks_list", "task_add", "calendar_upcoming"],
     "forge": ["prepare_work"],
     "herald": ["email_unread", "email_search", "email_read", "email_compose", "email_reply", "calendar_add",
