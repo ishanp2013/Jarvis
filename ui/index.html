@@ -378,8 +378,9 @@
       </div>
       <div class="card">
         <h3>WhatsApp</h3>
-        <p class="muted">There is no official way to read personal WhatsApp chats. Jarvis sends to saved contacts through the WhatsApp app (or only fills the message in, if "Ask before sending" is on).</p>
+        <p class="muted">Jarvis sends to saved contacts through the WhatsApp app (or only fills the message in, if "Ask before sending" is on). To answer "has Sam replied on WhatsApp?" he reads WhatsApp Desktop's chat list on this PC: chat names, the last message's preview and unread counts. He never opens chats or marks them read.</p>
         <label class="check"><input type="checkbox" data-set="whatsapp_enabled"> Allow WhatsApp messages</label>
+        <label class="check"><input type="checkbox" data-set="whatsapp_read"> Let Jarvis read the WhatsApp chat list</label>
         <p class="muted">Contacts: save a number so "send hi to Sam on WhatsApp" opens that chat directly. Numbers stay on this PC.</p>
         <div class="secret-row"><input id="wa-name" placeholder="Name, e.g. Sam"><input id="wa-phone" placeholder="+971 50 123 4567"><button class="small" id="wa-add">Add</button></div>
         <ul id="wa-contacts"></ul>

@@ -220,7 +220,10 @@ The bot can't read your personal DMs.
 ### WhatsApp
 - Install **WhatsApp Desktop** on the laptop and sign in.
 - In **Connections → WhatsApp**, save contacts (name and number) so "send hi to Sam on WhatsApp" can open the right chat. Numbers stay on your PC.
-- There's no official way to read personal WhatsApp chats. Jarvis sees new messages only through your phone's notifications (see [Your phone](#your-phone)).
+- **Checking replies:** ask "has Sam replied on WhatsApp?" or "check my WhatsApp". Jarvis reads WhatsApp Desktop's chat list on your PC: chat names, the time, the last message's preview and unread counts. No AI request is used.
+  - He only sees the most recent chats the list shows (usually 15 to 20). He never opens a chat, scrolls or marks anything as read.
+  - If WhatsApp is minimised, its window shows for about a second without taking focus, then goes back. WhatsApp Desktop has to be running.
+  - Turn it off with **Connections → WhatsApp → Let Jarvis read the WhatsApp chat list**.
 
 ### Smart home (Home Assistant)
 1. In Home Assistant: your profile → **Security → Long-lived access tokens → Create token**.

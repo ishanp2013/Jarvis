@@ -232,6 +232,13 @@ def t_whatsapp_send(name, text):
     return whatsapp.send_to(name, text)
 
 
+@tool("whatsapp_chats", "Read WhatsApp Desktop's chat list: for each recent chat, who sent the last message, when, "
+      "a preview of it and the unread count. Use for 'has X replied', 'any new WhatsApp messages'. Can't open chats "
+      "or read older messages.", {"name": ("string", "optional chat or contact name to look for")}, [])
+def t_whatsapp_chats(name=""):
+    return whatsapp.chats_for_ai(name)
+
+
 @tool("whatsapp_prepare", "Open WhatsApp with a message typed in but not sent (use when the user wants to check it first)",
       {"text": ("string", "message"), "name": ("string", "optional contact name")}, ["text"])
 def t_whatsapp(text, name=""):
@@ -1028,14 +1035,14 @@ class Brain:
             mem = [x["text"] for x in self.store.memories()]
             return ("I remember: " + "; ".join(mem[-8:]) + ".") if mem else "Nothing yet."
         self._qowner = "herald"
+        if wr := whatsapp.parse_read(text):
+            self.store.log("action", "Read the WhatsApp chat list (on this PC)", agent="herald")
+            return whatsapp.reply_status(wr[1]) if wr[0] == "reply" else whatsapp.summary()
         if wa := whatsapp.parse(text):
             if settings.get("confirm_sends", False):
                 return whatsapp.draft_to(*wa)
             self.store.log("action", f"WhatsApp send to {wa[0]} without confirmation (setting off)")
             return whatsapp.send_to(*wa)
-        if m(r"^(?:check|read)(?: my)? whatsapp") or m(r".*whatsapp messages"):
-            return ("WhatsApp doesn't offer an official way for apps to read personal chats, so I can't read them. "
-                    "I can send messages to your saved contacts through the WhatsApp app.")
         self._qowner = "scout"
         # weather (free, no key): "what's the weather", "weather in dubai", "will it rain tomorrow"
         if r := m(r"^(?:what(?:'s| is) the |how(?:'s| is) the )?(?:weather|forecast|temperature)(?: like)?(?: (?:in|for|at) (.+?))?(?: (?:today|tomorrow|now|right now))?$") \

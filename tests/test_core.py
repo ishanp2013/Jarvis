@@ -150,8 +150,53 @@ class RouterTests(RouterBase):
         self.ask("remember that my exam is on Friday")
         self.assertIn("exam is on Friday", self.ask("what do you remember"))
 
-    def test_whatsapp_honest(self):
-        self.assertIn("official", self.ask("read my whatsapp messages"))
+    def test_whatsapp_read_questions(self):
+        from jarvis.tools import whatsapp as wa
+        cases = {
+            "has sam send any replies to my message in whatsapp?": ("reply", "sam"),
+            "has Sam replied on WhatsApp": ("reply", "Sam"),
+            "did ms rao text me back on whatsapp": ("reply", "ms rao"),
+            "any reply from Sam Lee on whatsapp?": ("reply", "Sam Lee"),
+            "what did sam say on whats app": ("reply", "sam"),
+            "read my whatsapp messages": ("summary", None),
+            "check whatsapp": ("summary", None),
+            "do i have any new messages on whatsapp": ("summary", None),
+            "has anyone messaged me on whatsapp": ("summary", None),
+        }
+        for text, want in cases.items():
+            self.assertEqual(wa.parse_read(text), want, text)
+        for text in ("send hi to sam on whatsapp", "has sam replied to my email", "open whatsapp"):
+            self.assertIsNone(wa.parse_read(text), text)
+
+    def test_whatsapp_chat_rows(self):
+        from jarvis.tools import whatsapp as wa
+        r = wa.parse_row("2 unread messages Sam Lee 9:41 PM", ["2 unread messages", "Sam Lee", "9:41 PM", "see you at 5"])
+        self.assertEqual((r["chat"], r["time"], r["unread"], r["sender"], r["text"], r["from_me"]),
+                         ("Sam Lee", "9:41 PM", 2, "", "see you at 5", False))
+        r = wa.parse_row("Mum 🌸 21/11/2026", ["Mum ", "🌸", "21/11/2026", "You", ": ", "ok"])
+        self.assertEqual((r["chat"], r["time"], r["from_me"], r["text"]), ("Mum 🌸", "21/11/2026", True, "ok"))
+        r = wa.parse_row("Class 9B 10:02 AM", ["Class 9B", "10:02 AM", "~ Ana", ": ", "Note: test ", "🔥"])
+        self.assertEqual((r["sender"], r["text"]), ("Ana", "Note: test 🔥"))
+        r = wa.parse_row("Sam Yesterday", ["Sam", "Yesterday", "Note: bring a pen"])  # a colon in a 1:1 message
+        self.assertEqual((r["sender"], r["text"], r["time"]), ("", "Note: bring a pen", "Yesterday"))
+
+    def test_whatsapp_reply_answers(self):
+        from jarvis.tools import whatsapp as wa
+        row = lambda chat, sender="", text="hi", unread=0: {"chat": chat, "time": "9:41 PM", "unread": unread, "sender": sender,
+                                                             "text": text, "from_me": sender == "You"}
+        chats = [row("Sam Lee", text="see you at 5", unread=1), row("Surya Ma'am", "You", "did you check it?"), row("Class 9B", "Ana")]
+        self.assertTrue(wa.reply_status("sam", chats).startswith("Yes. The latest message is from Sam Lee at 9:41 PM"))
+        self.assertIn("1 unread", wa.reply_status("Sam Lee", chats))
+        self.assertTrue(wa.reply_status("suriya mam", chats).startswith("Not yet."))
+        self.assertIn("don't see a chat with Bob", wa.reply_status("Bob", chats))
+        self.assertIn("1 unread WhatsApp message in 1 chat", wa.summary(chats))
+        self.assertIn("No unread", wa.summary([row("Sam")]))
+        # the quick route answers locally (no AI) and never reads when switched off
+        with mock.patch.object(wa, "recent_chats", lambda: chats):
+            self.assertIn("Sam Lee", self.ask("has sam replied on whatsapp?"))
+        with mock.patch.dict(settings._data, {"whatsapp_read": False}):
+            self.assertIn("turned off", self.ask("has sam replied on whatsapp?"))
+        self.assertEqual(__import__("jarvis.team", fromlist=["x"]).owner_of("whatsapp_chats"), "herald")
 
     def test_whatsapp_draft_offline(self):
         from jarvis.tools import whatsapp as wa

@@ -114,6 +114,7 @@ DEFAULTS = {
     "discord_channels": [],          # [{"id": "...", "name": "announcements"}]
     "whatsapp_enabled": True,
     "whatsapp_contacts": {},         # {"Sam": "971500000000"}: stays on this PC
+    "whatsapp_read": True,           # read WhatsApp Desktop's chat list (names, last message preview, unread)
     "notion_enabled": False,
     "notion_page_id": "",            # page notes are added to; empty = most recently edited shared page
     "slack_enabled": False,
