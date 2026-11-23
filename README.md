@@ -47,6 +47,7 @@ Jarvis runs in the background, starts with Windows and is reachable from your ph
 | **Background agent** | Checks Classroom, Gmail and phone notifications every 45 minutes. Understands assignments and tests, keeps a task list, drafts replies for your approval, and reminds you before deadlines. |
 | **Prepared work** | Turns tasks into finished PowerPoint decks, Word documents, study notes, revision sheets and spreadsheets, researched from reliable sources and saved in *Documents\School Projects*. |
 | **Briefings** | "Welcome back. You received 8 messages… I've prepared your science presentation…", spoken when you return, plus a Today tab on the laptop and phone. |
+| **Jarvis and his team** | Jarvis talks to you and passes work to five specialists: **Scholar** (school, tasks), **Forge** (makes files), **Herald** (messages), **Operator** (laptop and phone), **Scout** (research). Each uses only its own tools, and only Herald can send, enforced in code. Common commands use no AI; a chat question costs 1 request; delegated work costs 2 or more. Scout searches the web before answering. |
 
 ---
 
