@@ -74,7 +74,8 @@ def triage(items, today=None):
     today = today or dt.date.today()
     prompt = _prompt(items, today)
     for attempt in range(2):
-        text = ai.complete(SYSTEM, prompt if attempt == 0 else prompt + "\n\nReply with the JSON array only, nothing else.")
+        text = ai.complete(SYSTEM, prompt if attempt == 0 else prompt + "\n\nReply with the JSON array only, nothing else.",
+                           agent="scholar")
         try:
             return {i - 1: r for i, r in _clean(ai.parse_json(text), len(items)).items()}
         except ValueError:

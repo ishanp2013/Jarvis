@@ -17,7 +17,7 @@ import uuid
 
 import httpx
 
-from . import ai, providers
+from . import ai, providers, team
 from .config import get_secret, settings
 from .tools import (discord, files, games, github, google, home, layout, microsoft, notion, outlook_classic, routines,
                     phone, screen, slack, smalltalk, spotify, telegram, uia, weather, web, whatsapp, youtube)
@@ -492,6 +492,7 @@ class Brain:
         self.agent = None           # set by the app: the background agent (task list, checks)
         self.worker = None          # set by the app: prepares presentations, documents and notes
         self.briefing_fn = None     # set by the app: the welcome-back briefing, as text
+        self.acting = None          # the team member acting now; None = Jarvis acting for the whole team
 
     # ---------------- approvals
     def _request_approval(self, name, args):
@@ -1100,7 +1101,11 @@ class Brain:
                               user=user, memories=mems)
 
     def _tools(self):
-        return [t for n, t in TOOLS.items() if not (self._private_cloud() and n in PERSONAL_TOOLS)]
+        """The tools the AI may use right now: the acting team member's own (all of them while Jarvis acts
+        for the whole team), minus personal-data tools in private mode."""
+        allowed = team.tools_of(self.acting) if self.acting else None
+        return [t for n, t in TOOLS.items()
+                if not (self._private_cloud() and n in PERSONAL_TOOLS) and (allowed is None or n in allowed)]
 
     def _auto_ok(self, name):
         """True when a tool that normally asks first may run at once: confirmations are off for it, and for
@@ -1117,6 +1122,10 @@ class Brain:
             return {"error": "Private mode: personal data is not shared with cloud AI."}
         if not t:
             return {"error": f"unknown tool {name}"}
+        owner = team.owner_of(name)
+        if self.acting and owner != self.acting:  # enforced here, whatever the AI was told
+            self.store.log("blocked", f"{self.acting} tried {name}, which belongs to {owner}", self.acting)
+            return {"error": f"{name} isn't one of your tools; it belongs to {owner}."}
         args = {k: v for k, v in (args or {}).items() if k in t["params"]}
         if name == "look_at_screen":
             if not SCREEN_ASK.search(self.request or ""):
@@ -1129,12 +1138,12 @@ class Brain:
         if name == "game_mode":
             return self.set_game_mode(bool(args.get("on", True))) if self.set_game_mode else {"error": "not available"}
         self.emit("activity", {"text": f"Using {name}"})
-        self.store.log("tool", f"{name} {json.dumps(args)[:200]}")
+        self.store.log("tool", f"{name} {json.dumps(args)[:200]}", owner)
         if t["approval"] and not self._auto_ok(name):
             self._request_approval(name, args)
             return {"status": "awaiting_user_approval", "note": "A confirmation card is shown. It runs only if the user approves."}
         if t["approval"]:
-            self.store.log("action", f"{name} ran without confirmation (setting off) {json.dumps(args)[:200]}")
+            self.store.log("action", f"{name} ran without confirmation (setting off) {json.dumps(args)[:200]}", owner)
         try:
             out = t["fn"](**args)
         except Exception as e:
@@ -1198,7 +1207,7 @@ class Brain:
                     for m in self._history() if m["text"]]
         contents.append(types.Content(role="user", parts=[types.Part(text=text)]))
         for _ in range(6):
-            ai.count("chat")
+            ai.count("chat", self.acting or "jarvis")
             if self._live:
                 parts, reply = [], ""
                 for chunk in client.models.generate_content_stream(model=settings["gemini_model"], contents=contents, config=config):
@@ -1317,7 +1326,7 @@ class Brain:
         msgs.append({"role": "user", "content": text})
         tools = self._openai_tools()
         for _ in range(8):
-            ai.count("chat")
+            ai.count("chat", self.acting or "jarvis")
             body = {"model": providers.model(p), "messages": msgs, "tools": tools}
             if self._live:
                 msg = self._openai_stream(url, headers, body)
@@ -1363,7 +1372,7 @@ class Brain:
         messages = history + [{"role": "user", "content": text}]
         extra = self._anthropic_extra(model)
         for _ in range(8):
-            ai.count("chat")
+            ai.count("chat", self.acting or "jarvis")
             kw = dict(model=model, max_tokens=16000, system=self._system(), tools=tools, messages=messages, **extra)
             if self._live:
                 with client.beta.messages.stream(**kw) as s:
@@ -1417,7 +1426,7 @@ class Brain:
         prompt = (f"This is a screenshot of my Windows screen. {question}\nAnswer in 1 to 4 short sentences, plain text, "
                   "no markdown, since your answer is spoken aloud.")
         override = (settings.get("vision_model") or "").strip()
-        ai.count("chat")
+        ai.count("chat", self.acting or "jarvis")
         try:
             if p["kind"] == "gemini":
                 from google import genai

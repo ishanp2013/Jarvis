@@ -31,7 +31,7 @@ def _read():
         data = json.loads(USAGE_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
-    return data if data.get("day") == _day() else {"day": _day(), "chat": 0, "agent": 0, "exhausted": False}
+    return data if data.get("day") == _day() else {"day": _day(), "chat": 0, "agent": 0, "exhausted": False, "agents": {}}
 
 
 def usage():
@@ -39,15 +39,20 @@ def usage():
         d = _read()
     limit = int(settings.get("ai_daily_limit") or 50)
     return {"chat": d["chat"], "agent": d["agent"], "total": d["chat"] + d["agent"], "limit": limit,
-            "agent_budget": int(settings.get("agent_daily_budget") or 25), "exhausted": d["exhausted"]}
+            "agent_budget": int(settings.get("agent_daily_budget") or 25), "exhausted": d["exhausted"],
+            "by_agent": dict(d.get("agents") or {})}
 
 
-def count(kind="chat"):
+def count(kind="chat", agent=None):
+    """Counts one request: as your chat or background work, and under the team member who made it."""
     if not providers.is_cloud():
         return  # a model on this PC has no daily limit
     with _lock:
         d = _read()
         d[kind] = d.get(kind, 0) + 1
+        who = agent or ("jarvis" if kind == "chat" else "scholar")
+        agents = d.setdefault("agents", {})  # usage files from before the team have no per-agent counts yet
+        agents[who] = agents.get(who, 0) + 1
         USAGE_FILE.write_text(json.dumps(d), encoding="utf-8")
 
 
@@ -70,15 +75,16 @@ def agent_may_use(n=1):
 
 
 # ------------------------------------------------------------------ one-shot requests
-def complete(system, prompt, kind="agent", max_tokens=6000):
+def complete(system, prompt, kind="agent", max_tokens=6000, agent=None):
     """Send one request to the chosen AI model and return its text. Raises OutOfBudget when the agent's
-    share is used up, or RuntimeError with a readable message on any other failure."""
+    share is used up, or RuntimeError with a readable message on any other failure. `agent` is the team
+    member asking (scholar, forge...), for the per-agent count."""
     p = providers.current()
     if not p or not providers.available():
         raise RuntimeError("No AI model is set up. Add one in Settings.")
     if kind == "agent" and not agent_may_use():
         raise OutOfBudget("The agent's share of today's free AI requests is used up; it continues after midnight UTC.")
-    count(kind)
+    count(kind, agent)
     try:
         if p["kind"] == "anthropic":
             import anthropic

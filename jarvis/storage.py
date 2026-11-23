@@ -60,6 +60,8 @@ class Store:
             CREATE TABLE IF NOT EXISTS items(id INTEGER PRIMARY KEY, source TEXT, ext_id TEXT, ts REAL, sender TEXT,
                 title TEXT, school INTEGER, category TEXT, importance INTEGER, summary TEXT, needs_reply INTEGER,
                 deadline TEXT, reply TEXT, url TEXT, UNIQUE(source, ext_id));
+            CREATE TABLE IF NOT EXISTS handoffs(id INTEGER PRIMARY KEY, ts REAL, from_agent TEXT, to_agent TEXT, what TEXT,
+                status TEXT, result TEXT);
             CREATE TABLE IF NOT EXISTS jobs(id INTEGER PRIMARY KEY, task_id INTEGER, kind TEXT, title TEXT, state TEXT,
                 step TEXT, data TEXT, result_path TEXT, error TEXT, created REAL, updated REAL);
             CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY, title TEXT, details TEXT, kind TEXT, due TEXT,
@@ -67,6 +69,9 @@ class Store:
                 result_path TEXT, reminded TEXT DEFAULT '');
             """
         )
+        cols = {r[1] for r in self._db.execute("PRAGMA table_info(activity)")}
+        if "agent" not in cols:  # older databases: add the team column; old entries just have none
+            self._db.execute("ALTER TABLE activity ADD COLUMN agent TEXT")
         self._db.commit()
 
     # ---- what the agent has seen (so nothing is processed twice)
@@ -217,10 +222,26 @@ class Store:
         self._exec("DELETE FROM memories WHERE id=?", (mem_id,))
 
     # activity log
-    def log(self, kind, text):
-        self._exec("INSERT INTO activity(ts, kind, text) VALUES(?,?,?)", (time.time(), kind, redact(text)))
+    def log(self, kind, text, agent=None):
+        """agent: the team member who did it (jarvis, scholar, forge, herald, operator, scout), if any."""
+        self._exec("INSERT INTO activity(ts, kind, text, agent) VALUES(?,?,?,?)", (time.time(), kind, redact(text), agent))
         self._exec("DELETE FROM activity WHERE id < (SELECT MAX(id) - 2000 FROM activity)")
 
-    def activity(self, n=100):
-        rows = self._query("SELECT ts, kind, text FROM activity ORDER BY id DESC LIMIT ?", (n,))
-        return [{"ts": r[0], "kind": r[1], "text": r[2]} for r in rows]
+    def activity(self, n=100, agent=None):
+        if agent:
+            rows = self._query("SELECT ts, kind, text, agent FROM activity WHERE agent=? ORDER BY id DESC LIMIT ?", (agent, n))
+        else:
+            rows = self._query("SELECT ts, kind, text, agent FROM activity ORDER BY id DESC LIMIT ?", (n,))
+        return [{"ts": r[0], "kind": r[1], "text": r[2], "agent": r[3]} for r in rows]
+
+    # ---- handoffs between team members ("Scholar found an assignment -> Forge prepares it")
+    def add_handoff(self, from_agent, to_agent, what, status="open"):
+        return self._exec("INSERT INTO handoffs(ts, from_agent, to_agent, what, status, result) VALUES(?,?,?,?,?,?)",
+                          (time.time(), from_agent, to_agent, redact(what)[:300], status, "")).lastrowid
+
+    def update_handoff(self, hid, status, result=""):
+        self._exec("UPDATE handoffs SET status=?, result=? WHERE id=?", (status, redact(result)[:300], hid))
+
+    def handoffs(self, n=30):
+        rows = self._query("SELECT id, ts, from_agent, to_agent, what, status, result FROM handoffs ORDER BY id DESC LIMIT ?", (n,))
+        return [dict(zip(("id", "ts", "from", "to", "what", "status", "result"), r)) for r in rows]

@@ -413,6 +413,7 @@ jarvis/
   ai.py           background AI requests and the daily budget
   power.py        keep awake while plugged in
   autostart.py    start at sign-in
+  team/           Jarvis's team: the agents (Jarvis, Scholar, Forge, Herald, Operator, Scout), their tools and permissions
   agent/          background agent: sources, triage, tasks, worker, research, briefing, file builders
   tools/          one module per app or service (spotify, google, classroom, phone, github, …)
 ui/               dashboard, floating orb, phone app (service worker for offline)

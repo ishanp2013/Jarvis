@@ -146,7 +146,7 @@ class Agent:
         self.last = {"when": time.time(), "summary": summary, "problems": problems}
         settings.update({"agent_last_run": time.time()})
         self.store.log("agent", f"Checked ({reason}, {time.time() - started:.0f}s): {summary}" + (
-            " Problems: " + "; ".join(problems) if problems else ""))
+            " Problems: " + "; ".join(problems) if problems else ""), "scholar")
         return summary
 
     # ---------------- reminders

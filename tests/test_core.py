@@ -9,11 +9,14 @@ from unittest import mock
 
 import numpy as np
 
-from jarvis import speech
+from jarvis import ai, speech
 from jarvis.brain import Brain, TOOLS
 from jarvis.config import settings
 from jarvis.storage import Store, redact
 from jarvis.tools import windows as win
+
+# Tests never touch your real daily AI count (they used to add to it and shrink your free budget).
+ai.USAGE_FILE = Path(tempfile.mkdtemp()) / "ai_usage.json"
 
 
 class FakeListener:
@@ -1046,7 +1049,8 @@ class WorkerTests(unittest.TestCase):
         self.replies = []
         self.patches = [
             mock.patch.object(worker, "output_dir", lambda: self.out),
-            mock.patch.object(worker.ai, "complete", lambda system, prompt, kind="agent", max_tokens=0: json.dumps(self.replies.pop(0))),
+            mock.patch.object(worker.ai, "complete", lambda system, prompt, kind="agent", max_tokens=0, agent=None:
+                              json.dumps(self.replies.pop(0))),
             mock.patch.object(worker.ai, "agent_may_use", lambda n=1: True),
             mock.patch.object(worker.research, "gather", lambda topic, queries, **k: [
                 {"n": 1, "title": "Renewable energy - Wikipedia", "url": "https://en.wikipedia.org/wiki/Renewable_energy",
@@ -1232,6 +1236,94 @@ class BriefingCommandTests(RouterBase):
         self.brain.briefing_fn = lambda: "Welcome back. You received 2 emails."
         for q in ("what did I miss", "brief me", "give me my briefing", "what's happening today", "catch me up"):
             self.assertIn("You received 2 emails", self.ask(q), q)
+
+
+class TeamTests(unittest.TestCase):
+    """Jarvis's team: every tool has exactly one owner, and an agent can only use its own tools."""
+
+    def test_every_tool_has_one_owner(self):
+        from jarvis import team
+        self.assertEqual(set(TOOLS), set(team.OWNER), "every tool needs exactly one owner, and no owner may list a missing tool")
+        counted = sum(len(a.tools) for a in team.AGENTS.values())
+        self.assertEqual(counted, len(TOOLS))  # nobody shares a tool
+
+    def test_only_herald_sends(self):
+        from jarvis import team
+        from jarvis.brain import SEND_TOOLS
+        self.assertTrue(SEND_TOOLS <= team.tools_of("herald"))
+        for name in ("scholar", "scout", "forge", "operator", "jarvis"):
+            self.assertFalse(SEND_TOOLS & team.tools_of(name), name)
+        device = {"power_laptop", "press_risky_button", "close_app", "home_control", "phone_open", "phone_find"}
+        self.assertTrue(device <= team.tools_of("operator"))
+        for name in ("scholar", "scout", "herald"):
+            self.assertFalse(device & team.tools_of(name), name)
+
+    def test_profiles(self):
+        from jarvis import team
+        self.assertEqual(list(team.AGENTS), ["jarvis", "scholar", "forge", "herald", "operator", "scout"])
+        p = team.agent("forge").profile()
+        self.assertEqual((p["title"], p["budget"], p["enabled"]), ("Forge", 15, True))
+        self.assertTrue(team.agent("herald").may("send messages"))
+        self.assertFalse(team.agent("scholar").may("send messages"))
+
+    def test_agents_can_only_use_their_own_tools(self):
+        brain, _, _ = make_brain()
+        brain.request = "email Ms Rao that I'll be late"
+        sent = []
+        with mock.patch.dict(TOOLS["email_compose"], fn=lambda **k: sent.append(k) or "sent"):
+            brain.acting = "scholar"
+            out = brain._run_tool("email_compose", {"to": "a@b.c", "subject": "x", "body": "y"}, [])
+            self.assertIn("belongs to herald", out["error"])
+            self.assertEqual(sent, [])
+            self.assertEqual({t["name"] for t in brain._tools()}, {"my_tasks", "my_task_add", "my_task_done", "tasks_list",
+                                                                  "task_add", "calendar_upcoming"})
+            blocked = [a for a in brain.store.activity(10) if a["kind"] == "blocked"]
+            self.assertEqual(blocked[0]["agent"], "scholar")
+            brain.acting = None  # Jarvis acting for the whole team: everything works as before
+            self.assertEqual(len(brain._tools()), len(TOOLS))
+
+    def test_tool_calls_are_tagged_with_their_owner(self):
+        brain, _, _ = make_brain()
+        with mock.patch.dict(TOOLS["system_info"], fn=lambda: {"cpu_percent": 5}):
+            brain._run_tool("system_info", {}, [])
+        self.assertEqual(brain.store.activity(5)[0]["agent"], "operator")
+
+
+class TeamStorageTests(unittest.TestCase):
+    def test_per_agent_counting_with_an_old_usage_file(self):
+        import json
+        from jarvis import ai
+        tmp = Path(tempfile.mkdtemp()) / "usage.json"
+        tmp.write_text(json.dumps({"day": ai._day(), "chat": 3, "agent": 1, "exhausted": False}))  # from before the team
+        with mock.patch.object(ai, "USAGE_FILE", tmp), mock.patch.object(ai.providers, "is_cloud", lambda: True):
+            ai.count("chat", "scout")
+            ai.count("chat")
+            ai.count("agent", "forge")
+            u = ai.usage()
+        self.assertEqual((u["chat"], u["agent"]), (5, 2))
+        self.assertEqual(u["by_agent"], {"scout": 1, "jarvis": 1, "forge": 1})
+
+    def test_old_database_gets_the_agent_column(self):
+        import sqlite3
+        path = Path(tempfile.mkdtemp()) / "old.db"
+        db = sqlite3.connect(str(path))
+        db.execute("CREATE TABLE activity(id INTEGER PRIMARY KEY, ts REAL, kind TEXT, text TEXT)")
+        db.execute("INSERT INTO activity(ts, kind, text) VALUES(1, 'tool', 'old entry')")
+        db.commit()
+        db.close()
+        store = Store(path)
+        store.log("tool", "new entry", "operator")
+        rows = store.activity(5)
+        self.assertEqual([(r["text"], r["agent"]) for r in rows], [("new entry", "operator"), ("old entry", None)])
+        self.assertEqual(store.activity(5, agent="operator")[0]["text"], "new entry")
+
+    def test_handoff_trail(self):
+        from jarvis.agent.worker import Worker
+        store = Store(Path(tempfile.mkdtemp()) / "t.db")
+        hid = store.add_handoff("scholar", "forge", "Prepare Science presentation")
+        Worker(store, lambda *a, **k: None)._close_handoff({"title": "Science presentation"}, "done", "Deck.pptx")
+        h = store.handoffs()[0]
+        self.assertEqual((h["id"], h["from"], h["to"], h["status"], h["result"]), (hid, "scholar", "forge", "done", "Deck.pptx"))
 
 
 if __name__ == "__main__":

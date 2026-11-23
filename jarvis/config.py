@@ -72,6 +72,13 @@ DEFAULTS = {
     "agent_auto_prepare": True,      # prepare drafts of new assignments (presentations, documents, notes) by itself
     "agent_output_dir": "",          # where prepared work is saved; empty = Documents\School Projects
     "classroom_enabled": False,
+    # Jarvis's team: each agent can be switched off and has a share of the day's AI requests
+    "agent_jarvis_on": True, "agent_jarvis_budget": 15,
+    "agent_scholar_on": True, "agent_scholar_budget": 10,
+    "agent_forge_on": True, "agent_forge_budget": 15,
+    "agent_herald_on": True, "agent_herald_budget": 3,
+    "agent_operator_on": True, "agent_operator_budget": 2,
+    "agent_scout_on": True, "agent_scout_budget": 5,
     # welcome-back briefing
     "briefing_enabled": True,        # brief me when I come back to the laptop
     "briefing_away_min": 30,         # how long away counts as "away"

@@ -147,8 +147,10 @@ class Jarvis:
                 log.exception("presence")
 
     def _auto_prepare(self, task):
-        if settings.get("agent_auto_prepare", True) and task:
-            self.worker.queue_task(task)
+        """Scholar found an assignment: hand it to Forge to prepare a draft."""
+        if settings.get("agent_auto_prepare", True) and task and self.worker.queue_task(task):
+            self.store.add_handoff("scholar", "forge", f"Prepare {task['title']}")
+            self.store.log("handoff", f"Scholar handed {task['title']} to Forge", "scholar")
 
     def _reply_card(self, item, text):
         self.brain._request_approval("email_reply", {"id": item["ext_id"], "body": text})

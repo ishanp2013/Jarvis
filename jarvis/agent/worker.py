@@ -140,7 +140,7 @@ class Worker:
 
     def _add(self, kind, title, data, task_id=None):
         job_id = self.store.add_job(kind, title, data, task_id)
-        self.store.log("agent", f"Queued: {kind} for {title}")
+        self.store.log("agent", f"Queued: {kind} for {title}", "forge")
         self.q.put(job_id)
         return job_id
 
@@ -158,7 +158,7 @@ class Worker:
                 continue
             if not ai.agent_may_use(3):
                 self.store.update_job(job_id, state="waiting", error="Waiting for today's AI budget.")
-                self.store.log("agent", f"Waiting for AI budget: {job['title']}")
+                self.store.log("agent", f"Waiting for AI budget: {job['title']}", "forge")
                 continue
             self.current = job_id
             try:
@@ -168,10 +168,18 @@ class Worker:
             except Exception as e:
                 log.exception("job %s", job_id)
                 self.store.update_job(job_id, state="failed", error=str(e)[:400])
-                self.store.log("agent", f"Couldn't prepare {job['title']}: {str(e)[:200]}")
+                self.store.log("agent", f"Couldn't prepare {job['title']}: {str(e)[:200]}", "forge")
+                self._close_handoff(job, "failed", str(e)[:200])
                 self.notify(f"I couldn't finish {job['title']}: {str(e)[:120]}", important=False)
             finally:
                 self.current = None
+
+    def _close_handoff(self, job, status, result):
+        """Marks Scholar's handoff for this job as done or failed, so the team trail shows how it ended."""
+        for h in self.store.handoffs(100):
+            if h["to"] == "forge" and h["status"] == "open" and h["what"] == f"Prepare {job['title']}":
+                self.store.update_handoff(h["id"], status, result)
+                return
 
     def retry_waiting(self):
         for j in self.store.jobs(states=("waiting",)):
@@ -192,7 +200,7 @@ class Worker:
     def _ask(self, system, prompt):
         for attempt in range(2):
             text = ai.complete(system, prompt if attempt == 0 else prompt + "\n\nReply with the JSON only, complete and valid.",
-                               max_tokens=12000)
+                               max_tokens=12000, agent="forge")
             try:
                 return ai.parse_json(text)
             except ValueError as e:
@@ -216,7 +224,8 @@ class Worker:
         self.store.update_job(job["id"], state="done", step="saved", result_path=str(path), error="")
         if job["task_id"]:
             self.store.update_task(job["task_id"], result_path=str(path))
-        self.store.log("agent", f"Prepared {job['title']}: {path}")
+        self.store.log("agent", f"Prepared {job['title']}: {path}", "forge")
+        self._close_handoff(job, "done", os.path.basename(str(path)))
         self.notify(f"{job['title']} is ready: {summary} Saved in School Projects. It's a draft: read it through and "
                     "make it your own before handing it in.", important=True)
 
