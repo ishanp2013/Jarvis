@@ -268,6 +268,15 @@
         <ul id="devices"></ul>
       </div>
 
+      <h3>Builder (Jarvis improves himself)</h3>
+      <div class="card">
+        <p class="muted">Say "tell Claude Code to make the UI cooler". After you approve, Claude Code works on a separate copy of Jarvis, the tests run, and you decide whether to apply the change. "Undo Builder's last change" puts it back. Builder uses <b>your own</b> Claude account through Claude Code, not Jarvis's AI budget.</p>
+        <div class="row"><span id="builder-status" class="muted">checking…</span></div>
+        <label class="check"><input type="checkbox" data-set="builder_enabled"> Let Builder change Jarvis's code (with my approval each time)</label>
+        <label class="check"><input type="checkbox" data-set="builder_account_confirmed"> Claude Code is signed in with my own personal account (only tick this if it's true)</label>
+        <ul id="builder-changes" class="mini"></ul>
+      </div>
+
       <h3>Desktop</h3>
       <label>Browser path (Opera GX) <input data-set="browser_path"></label>
       <label class="check"><input type="checkbox" id="overlay-toggle"> Floating orb: a small always-on-top Jarvis (click to talk, double-click to open this window, drag to move)</label>

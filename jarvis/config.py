@@ -80,6 +80,11 @@ DEFAULTS = {
     "agent_herald_on": True, "agent_herald_budget": 3,
     "agent_operator_on": True, "agent_operator_budget": 2,
     "agent_scout_on": True, "agent_scout_budget": 5,
+    "agent_builder_on": True, "agent_builder_budget": 2,
+    # Builder: changes Jarvis's own code through Claude Code (only with your own personal Claude account)
+    "builder_enabled": False,
+    "builder_account_confirmed": False,  # set only if Claude Code's account is yours despite a non-personal domain
+    "builder_timeout_min": 30,
     # welcome-back briefing
     "briefing_enabled": True,        # brief me when I come back to the laptop
     "briefing_away_min": 30,         # how long away counts as "away"

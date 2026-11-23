@@ -479,7 +479,8 @@ class VoicePipelineTests(unittest.TestCase):
         j.listener = Listener(speech.WakeWord(), lambda a: None, j._on_wake, lambda *a: None)
         j.listener.stream = True
         j.voice_turn = True
-        j._on_speaking(False)  # a spoken reply just finished
+        with mock.patch.dict(settings._data, {"follow_up_seconds": 6}):  # not your own setting, which may be off
+            j._on_speaking(False)  # a spoken reply just finished
         self.assertEqual(j.listener.mode, "listening", "should keep listening for a follow-up")
         j.stop_all()
         self.assertEqual(j.listener.mode, "idle")
@@ -1260,7 +1261,7 @@ class TeamTests(unittest.TestCase):
 
     def test_profiles(self):
         from jarvis import team
-        self.assertEqual(list(team.AGENTS), ["jarvis", "scholar", "forge", "herald", "operator", "scout"])
+        self.assertEqual(list(team.AGENTS), ["jarvis", "scholar", "forge", "herald", "operator", "scout", "builder"])
         p = team.agent("forge").profile()
         self.assertEqual((p["title"], p["budget"], p["enabled"]), ("Forge", 15, True))
         self.assertTrue(team.agent("herald").may("send messages"))
@@ -1376,7 +1377,8 @@ class DelegationTests(unittest.TestCase):
         reply, _ = self.brain._llm("what's the capital of australia")
         self.assertEqual(reply, "Canberra, sir.")
         self.assertEqual(ai.usage()["total"], 1)
-        self.assertEqual(self.tools_seen(0), {"game_mode", "ask_scholar", "ask_forge", "ask_herald", "ask_operator", "ask_scout"})
+        self.assertEqual(self.tools_seen(0), {"game_mode", "ask_scholar", "ask_forge", "ask_herald", "ask_operator", "ask_scout",
+                                              "ask_builder"})
 
     def test_delegated_with_a_tool(self):
         self.replies = [self.call("ask_operator", request="check the cpu"), self.call("system_info"), self.say("CPU is at 5%.")]
@@ -1561,6 +1563,169 @@ class WebFileTypeTests(unittest.TestCase):
         finally:
             srv.shutdown()
             srv.server_close()
+
+
+class SystemPowerTests(unittest.TestCase):
+    """Operator's files and commands: just does things, and asks first only for major ones."""
+
+    def test_which_commands_are_harmless(self):
+        from jarvis.tools import system
+        for c in ("Get-ChildItem Downloads", "ipconfig", "systeminfo", "Get-Process", "tasklist", "dir C:\\Users",
+                  "Test-Path D:\\projects", "ping google.com",
+                  "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' } | Select-Object IPAddress",
+                  "Get-Process | Sort-Object CPU -Descending | Select-Object -First 5"):
+            self.assertTrue(system.is_safe(c), c)
+        for c in ("Get-ChildItem | ForEach-Object { $_.Delete() }", "Get-Process chrome | ForEach-Object Kill",
+                  "Get-Item x | % { $_.MoveTo('y') }", "Get-Date || del x"):
+            self.assertFalse(system.is_safe(c), c)
+        for c in ("Remove-Item notes.txt", "Get-ChildItem | Remove-Item", "Stop-Process -Name chrome", "winget install vlc",
+                  "Set-ItemProperty HKCU:\\x -Name y -Value 1", "ipconfig > out.txt", "Get-Date; del x", "format D:",
+                  "Get-Content $(iex 'x')", "reg delete HKCU\\x", "shutdown /s", "New-Item test.txt", ""):
+            self.assertFalse(system.is_safe(c), c)
+
+    def test_protected_places(self):
+        from jarvis.tools import system
+        for p in (r"C:\Windows\System32\drivers", r"C:\Program Files\App", os.path.expandvars(r"%LOCALAPPDATA%\JarvisAssistant\x"),
+                  "C:\\", r"C:\Users\SomeoneElse\Documents"):
+            with self.assertRaises(RuntimeError, msg=p):
+                system.check_allowed(p)
+        system.check_allowed(str(Path.home() / "Documents" / "School"))  # your own folders are fine
+
+    def test_file_operations(self):
+        from jarvis.tools import system
+        tmp = Path(tempfile.mkdtemp())
+        with mock.patch.object(system, "_PROTECTED", []):  # the test folder lives under AppData\Local\Temp
+            self.assertIn("Made the folder", system.create_folder(str(tmp / "Science")))
+            (tmp / "notes.txt").write_text("hi")
+            system.copy(str(tmp / "notes.txt"), str(tmp / "Science"))
+            system.rename(str(tmp / "Science" / "notes.txt"), "notes-copy.txt")
+            system.move(str(tmp / "notes.txt"), str(tmp / "Science"))
+            self.assertEqual(sorted(x.name for x in (tmp / "Science").iterdir()), ["notes-copy.txt", "notes.txt"])
+            with self.assertRaises(RuntimeError):  # never overwrites
+                system.copy(str(tmp / "Science" / "notes.txt"), str(tmp / "Science"))
+            def fake_bin(op):  # stand-in for Windows' Recycle Bin call
+                os.remove(op[2])
+                return 0, False
+            with mock.patch("win32com.shell.shell.SHFileOperation", fake_bin):
+                self.assertIn("Recycle Bin", system.recycle(str(tmp / "Science" / "notes-copy.txt")))
+            self.assertEqual(system.list_folder(str(tmp / "Science"))["items"], ["notes.txt"])
+        self.assertEqual(system.resolve("my desktop").name.lower(), "desktop")
+        guessed = system.resolve(r"C:\Users\Not A Real User 123\Desktop\notes.txt")  # an invented user name
+        self.assertEqual(guessed, system._known_folder("Desktop") / "notes.txt")
+
+    def test_major_actions_ask_first(self):
+        from jarvis.tools import system
+        brain, _, _ = make_brain()
+        ran = []
+        with mock.patch.object(system, "run", lambda c, timeout=60: ran.append(c) or {"exit_code": 0, "output": "ok"}), \
+                mock.patch.dict(TOOLS["delete_file"], fn=lambda path: ran.append(("delete", path)) or "deleted"), \
+                mock.patch.dict(TOOLS["move_file"], fn=lambda source, destination: ran.append(("move", source)) or "moved"):
+            brain.request = "what's my ip address"
+            brain._run_tool("run_command", {"command": "ipconfig"}, [])
+            self.assertEqual(ran, ["ipconfig"])  # harmless: ran at once
+            out = brain._run_tool("run_command", {"command": "Stop-Process -Name chrome"}, [])
+            self.assertEqual(out["status"], "awaiting_user_approval")  # major: a card
+            brain.request = "delete my old notes"
+            self.assertEqual(brain._run_tool("delete_file", {"path": "Documents/old.txt"}, [])["status"], "awaiting_user_approval")
+            brain.request = "move my essay to the school folder"
+            brain._run_tool("move_file", {"source": "essay.docx", "destination": "School"}, [])
+            self.assertIn(("move", "essay.docx"), ran)  # asked for in the user's own words: just does it
+            brain.request = "read my latest email"  # the AI decided to move a file by itself: a card
+            out = brain._run_tool("move_file", {"source": "x.docx", "destination": "Y"}, [])
+            self.assertEqual(out["status"], "awaiting_user_approval")
+            self.assertEqual(len(ran), 2)
+
+    def test_make_folder_quick_command(self):
+        from jarvis.tools import system
+        made = []
+        brain, _, spoken = make_brain()
+        with mock.patch.object(system, "create_folder", lambda p: made.append(p) or "Made it."), \
+                mock.patch.object(settings, "get", lambda k, d=None: "off" if k == "llm_provider" else settings._data.get(k, d)):
+            brain.handle("make a folder called Science on my desktop", "text")
+        self.assertEqual(made, ["desktop\\Science"])
+
+
+class BuilderTests(unittest.TestCase):
+    """Builder with a fake Claude Code in a throwaway Git repository: your real Claude account is never used."""
+
+    def setUp(self):
+        import subprocess
+        from jarvis.tools import builder
+        self.b = builder
+        self.repo = Path(tempfile.mkdtemp()) / "Jarvis"
+        (self.repo / "tests").mkdir(parents=True)
+        (self.repo / "tests" / "test_ok.py").write_text("import unittest\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n")
+        (self.repo / "app.txt").write_text("v1\n")
+        git = lambda *a: subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True)
+        git("init", "-q", "-b", "main")
+        git("config", "user.name", "Test")
+        git("config", "user.email", "test@example.com")
+        git("add", "-A")
+        git("commit", "-q", "-m", "start")
+        fake = Path(tempfile.mkdtemp()) / "claude.cmd"  # "edits" app.txt like Claude Code would
+        fake.write_text("@echo off\r\necho v2 cooler> app.txt\r\necho Made the UI cooler.\r\n")
+        self.store = Store(Path(tempfile.mkdtemp()) / "t.db")
+        self.notes, self.cards = [], []
+        self.builder = builder.Builder(self.store, lambda t, important=False: self.notes.append(t), lambda job: self.cards.append(job["id"]))
+        self.values = {"builder_enabled": True, "builder_account_confirmed": False}
+        for p in (mock.patch.object(builder, "ROOT", self.repo), mock.patch.object(builder, "cli", lambda: str(fake)),
+                  mock.patch.object(builder, "account", lambda: {"signed_in": True, "personal": True}),
+                  mock.patch.object(builder, "restart_soon", lambda: self.notes.append("restart")),
+                  mock.patch.object(settings, "get", lambda k, d=None: self.values.get(k, settings._data.get(k, d)))):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def wait(self):
+        for _ in range(240):
+            if not self.builder.busy:
+                return
+            time.sleep(0.25)
+        self.fail("Builder didn't finish")
+
+    def test_change_apply_and_undo(self):
+        self.assertIn("has started", self.builder.start("make the UI cooler"))
+        self.wait()
+        job = self.store.jobs(limit=1)[0]
+        self.assertEqual(job["state"], "ready", job["error"])
+        self.assertTrue(job["data"]["tests_passed"])
+        self.assertEqual(self.cards, [job["id"]])  # asks before applying
+        self.assertEqual((self.repo / "app.txt").read_text().strip(), "v1")  # nothing changed yet
+        self.assertIn("Applied", self.builder.apply(job["id"]))
+        self.assertIn("cooler", (self.repo / "app.txt").read_text())
+        self.assertFalse(Path(job["data"]["tree"]).exists())  # the separate copy is cleaned up
+        self.assertIn("Undone", self.builder.undo_last())
+        self.assertEqual((self.repo / "app.txt").read_text().strip(), "v1")
+        self.assertEqual(self.notes.count("restart"), 2)
+
+    def test_discard(self):
+        self.builder.start("make the UI cooler")
+        self.wait()
+        job = self.store.jobs(limit=1)[0]
+        self.assertIn("Discarded", self.builder.discard(job["id"]))
+        self.assertEqual((self.repo / "app.txt").read_text().strip(), "v1")
+        self.assertIn("isn't waiting", self.builder.apply(job["id"]))
+
+    def test_refuses_company_accounts_and_unsaved_work(self):
+        with mock.patch.object(self.b, "account", lambda: {"signed_in": True, "personal": False}):
+            with self.assertRaises(RuntimeError) as e:
+                self.b.check_allowed()
+            self.assertIn("company or school account", str(e.exception))
+            self.values["builder_account_confirmed"] = True  # the user confirmed it's their own
+            self.b.check_allowed()
+        self.values["builder_enabled"] = False
+        with self.assertRaises(RuntimeError):
+            self.b.check_allowed()
+        self.values["builder_enabled"] = True
+        (self.repo / "app.txt").write_text("unsaved edit\n")
+        self.assertIn("aren't saved", self.builder.start("anything"))
+
+    def test_voice_request_shows_a_card(self):
+        brain, _, spoken = make_brain()
+        with mock.patch.object(settings, "get", lambda k, d=None: "off" if k == "llm_provider" else self.values.get(k, settings._data.get(k, d))):
+            brain.handle("go to claude code and open my jarvis chat. there, tell him to make the jarvis UI cooler", "text")
+        card = list(brain.pending.values())[-1]
+        self.assertEqual((card["tool"], card["args"]["request"]), ("builder_request", "make the jarvis UI cooler"))
+        self.assertIn("Claude Code", spoken[-1])
 
 
 if __name__ == "__main__":

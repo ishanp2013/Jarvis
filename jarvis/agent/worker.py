@@ -122,7 +122,8 @@ class Worker:
 
     def start(self):
         for j in self.store.jobs(states=("queued", "running")):  # resume what a restart interrupted
-            self.q.put(j["id"])
+            if j["kind"] != "builder":  # Builder's jobs share the table but aren't Forge's
+                self.q.put(j["id"])
         threading.Thread(target=self._loop, daemon=True, name="worker").start()
 
     # ---------------- adding work
@@ -182,7 +183,7 @@ class Worker:
                 return
 
     def retry_waiting(self):
-        for j in self.store.jobs(states=("waiting",)):
+        for j in [x for x in self.store.jobs(states=("waiting",)) if x["kind"] != "builder"]:
             self.store.update_job(j["id"], state="queued", error="")
             self.q.put(j["id"])
 
@@ -325,10 +326,10 @@ class Worker:
     def jobs(self):
         return [{"id": j["id"], "kind": j["kind"], "title": j["title"], "state": j["state"], "step": j["step"],
                  "result_path": j["result_path"], "error": j["error"], "updated": j["updated"],
-                 "review": j["data"].get("review", [])} for j in self.store.jobs(limit=30)]
+                 "review": j["data"].get("review", [])} for j in self.store.jobs(limit=30) if j["kind"] != "builder"]
 
     def latest(self, kind=None):
-        for j in self.store.jobs(states=("done",), limit=50):
+        for j in [x for x in self.store.jobs(states=("done",), limit=50) if x["kind"] != "builder"]:
             if (not kind or j["kind"] == kind) and j["result_path"] and os.path.exists(j["result_path"]):
                 return j
         return None

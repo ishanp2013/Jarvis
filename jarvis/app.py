@@ -16,6 +16,7 @@ from . import ai, autostart, config, power, providers, speech, team
 from . import brain as brain_module
 from .agent.core import Agent
 from .agent.worker import Worker
+from .tools.builder import Builder
 from .brain import Brain
 from .config import secret_status, settings
 from .listener import Listener
@@ -61,6 +62,9 @@ class Jarvis:
         self.brain.agent = self.agent
         brain_module._AGENT[0] = self.agent  # for the AI's task tools
         brain_module._WORKER[0] = self.worker
+        self.builder = Builder(self.store, self.notify,
+                               lambda job: self.brain._request_approval("builder_apply", {"job": job["id"]}))
+        brain_module._BUILDER[0] = self.builder
         self.ready = {"wake": False, "stt": False}
         self.game_mode, self._game_auto, self._game_off_checks, self._mic_before_game = False, False, 0, False
         self.overlay = None        # pywebview window (desktop mode) or subprocess (browser mode)
@@ -545,6 +549,7 @@ class Api:
         for name, a in team.AGENTS.items():
             mine = [x for x in recent if x["agent"] == name]
             busy = (j.brain._working == name or (name == "forge" and j.worker.current is not None)
+                    or (name == "builder" and j.builder.busy)
                     or (name == "scholar" and j.agent.running) or (name == "jarvis" and j.state in ("thinking", "speaking")))
             out.append({**a.profile(), "status": "off" if not a.enabled else "working" if busy else "idle",
                         "used_today": used.get(name, 0), "done_today": sum(1 for x in mine if x["ts"] >= day_start),
@@ -560,6 +565,10 @@ class Api:
     def ask_agent(self, name, text, source="text"):
         """A direct chat with one specialist: Jarvis isn't asked first, which saves an AI request."""
         threading.Thread(target=self._j.brain.handle, args=(text, source, name), daemon=True).start()
+
+    def builder_info(self):
+        from .tools import builder as b
+        return {"status": b.status(), "changes": self._j.builder.jobs()}
 
     def chat_history(self, channel="jarvis"):
         return self._j.store.recent_messages(60, channel)
