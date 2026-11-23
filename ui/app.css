@@ -137,15 +137,12 @@ h3:first-child { margin-top: 0; }
 
 /* ---------- centre: the core */
 .centre { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 0; }
-.core-host { position: relative; width: min(54vh, 100%); aspect-ratio: 1; }
+/* The core floats in the page: no frame, and its edges fade into the background instead of ending in a square. */
+.core-host { position: relative; width: min(62vh, 100%); aspect-ratio: 1; margin: -3vh 0;
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 58%, transparent 71%);
+  mask-image: radial-gradient(circle at 50% 50%, #000 58%, transparent 71%); }
 .core-host > canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
 .core-host #orb { width: 100%; height: 100%; }
-.core-frame { position: absolute; inset: 4%; pointer-events: none; }
-.core-frame i { position: absolute; width: 26px; height: 26px; border: 2px solid var(--accent); opacity: .45; }
-.core-frame i:nth-child(1) { top: 0; left: 0; border-right: 0; border-bottom: 0; }
-.core-frame i:nth-child(2) { top: 0; right: 0; border-left: 0; border-bottom: 0; }
-.core-frame i:nth-child(3) { bottom: 0; left: 0; border-right: 0; border-top: 0; }
-.core-frame i:nth-child(4) { bottom: 0; right: 0; border-left: 0; border-top: 0; }
 .state-label { font: 700 19px var(--hud); letter-spacing: .3em; text-transform: uppercase; color: var(--accent-2); min-height: 28px;
   text-shadow: 0 0 16px rgba(255, 181, 71, .5); }
 .hint { color: var(--muted); min-height: 20px; }

@@ -28,7 +28,7 @@ export function startCore3D(host) {
   host.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-  camera.position.set(0, 0, 9.5);
+  camera.position.set(0, 0, 14.5);  // far enough that the outer rings never touch the edge of the drawing area
   const root = new THREE.Group(); scene.add(root);
   const add = (o) => (root.add(o), o);
   const glow = glowTexture();
