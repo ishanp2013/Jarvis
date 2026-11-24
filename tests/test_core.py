@@ -157,7 +157,10 @@ class RouterTests(RouterBase):
             "has Sam replied on WhatsApp": ("reply", "Sam"),
             "did ms rao text me back on whatsapp": ("reply", "ms rao"),
             "any reply from Sam Lee on whatsapp?": ("reply", "Sam Lee"),
-            "what did sam say on whats app": ("reply", "sam"),
+            "what did sam say on whats app": ("chat", "sam"),
+            "read my chat with Sam on whatsapp": ("chat", "Sam"),
+            "has sam seen my message on whatsapp": ("seen", "sam"),
+            "did sam read my message on whatsapp": ("seen", "sam"),
             "read my whatsapp messages": ("summary", None),
             "check whatsapp": ("summary", None),
             "do i have any new messages on whatsapp": ("summary", None),
@@ -179,6 +182,32 @@ class RouterTests(RouterBase):
         self.assertEqual((r["sender"], r["text"]), ("Ana", "Note: test 🔥"))
         r = wa.parse_row("Sam Yesterday", ["Sam", "Yesterday", "Note: bring a pen"])  # a colon in a 1:1 message
         self.assertEqual((r["sender"], r["text"], r["time"]), ("", "Note: bring a pen", "Yesterday"))
+        # the latest thing can be a reaction to your message, not a reply
+        r = wa.parse_row("Sam Yesterday", ["Sam", "Yesterday", "Reacted ", "👍", " to:", "\xa0", '"', 'see you at 5"'])
+        self.assertEqual((r["reaction"], r["reacted_to"], r["from_me"]), ("👍", "see you at 5", False))
+        self.assertTrue(wa.reply_status("sam", [r]).startswith("No written reply, but Sam reacted 👍"))
+
+    def test_whatsapp_whole_chat(self):
+        from jarvis.tools import whatsapp as wa
+        tokens = [("t", "Today"), ("t", "~ "), ("t", "hello there"), ("t", "9:01 PM"),
+                  ("me", "You:"), ("t", "hi! "), ("t", "😀"), ("t", "9:02 PM"), ("status", " Read "),
+                  ("t", "are you coming?"), ("t", "9:05 PM"),
+                  ("me", "You:"), ("t", "yes"), ("t", "9:06 PM"), ("status", " Delivered ")]
+        msgs = wa.parse_messages(tokens)
+        self.assertEqual([(m["me"], m["text"], m["time"], m["status"]) for m in msgs], [
+            (False, "hello there", "9:01 PM", ""), (True, "hi! 😀", "9:02 PM", "Read"),
+            (False, "are you coming?", "9:05 PM", ""), (True, "yes", "9:06 PM", "Delivered")])
+        self.assertEqual(msgs[0]["day"], "Today")
+        data = {"chat": "Sam", "messages": msgs, "was_unread": 0, "row": {}}
+        self.assertTrue(wa.chat_reply_status("sam", data).startswith("No reply yet. Your last message at 9:06 PM"))
+        self.assertIn("delivered but not read", wa.chat_reply_status("sam", data))
+        self.assertTrue(wa.chat_seen_status("sam", data).startswith("Not yet: it's delivered but not read"))
+        replied = dict(data, messages=msgs[:3])
+        self.assertTrue(wa.chat_reply_status("sam", replied).startswith('Yes. Sam replied at 9:05 PM: "are you coming?"'))
+        self.assertTrue(wa.chat_seen_status("sam", replied).startswith("Yes, they've read it"))
+        reacted = dict(data, row={"reaction": "👍", "from_me": False})
+        self.assertIn("They reacted 👍 to it", wa.chat_reply_status("sam", reacted))
+        self.assertIn('Sam at 9:05 PM: "are you coming?"', wa.chat_recap("sam", data))
 
     def test_whatsapp_reply_answers(self):
         from jarvis.tools import whatsapp as wa
@@ -193,10 +222,17 @@ class RouterTests(RouterBase):
         self.assertIn("No unread", wa.summary([row("Sam")]))
         # the quick route answers locally (no AI) and never reads when switched off
         with mock.patch.object(wa, "recent_chats", lambda: chats):
-            self.assertIn("Sam Lee", self.ask("has sam replied on whatsapp?"))
+            self.assertIn("Sam Lee", self.ask("check my whatsapp"))
+        chat = {"chat": "Sam Lee", "was_unread": 0, "row": {}, "messages": [
+            {"me": True, "text": "free tomorrow?", "time": "9:00 PM", "day": "", "status": "Read"},
+            {"me": False, "text": "yes", "time": "9:41 PM", "day": "", "status": ""}]}
+        with mock.patch.object(wa, "read_chat", lambda name: chat):
+            self.assertIn('Sam Lee replied at 9:41 PM: "yes"', self.ask("has sam replied on whatsapp?"))
+            self.assertIn("they've read it", self.ask("has sam seen my message on whatsapp?"))
         with mock.patch.dict(settings._data, {"whatsapp_read": False}):
             self.assertIn("turned off", self.ask("has sam replied on whatsapp?"))
-        self.assertEqual(__import__("jarvis.team", fromlist=["x"]).owner_of("whatsapp_chats"), "herald")
+        team_mod = __import__("jarvis.team", fromlist=["x"])
+        self.assertEqual((team_mod.owner_of("whatsapp_chats"), team_mod.owner_of("whatsapp_read_chat")), ("herald", "herald"))
 
     def test_whatsapp_draft_offline(self):
         from jarvis.tools import whatsapp as wa
@@ -1165,6 +1201,7 @@ class TriageParsingTests(unittest.TestCase):
         values = {"ai_daily_limit": 50, "agent_daily_budget": 25, "ai_chat_reserve": 15}
         with mock.patch.object(ai, "USAGE_FILE", tmp), mock.patch.object(ai.providers, "is_cloud", lambda: True), \
                 mock.patch.object(ai.providers, "available", lambda: True), \
+                mock.patch.object(ai.providers, "chain", lambda: ["openrouter"]), \
                 mock.patch.object(settings, "get", lambda k, d=None: values.get(k, settings._data.get(k, d))):
             self.assertTrue(ai.agent_may_use())
             for _ in range(25):

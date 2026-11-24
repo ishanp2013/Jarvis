@@ -239,6 +239,14 @@ def t_whatsapp_chats(name=""):
     return whatsapp.chats_for_ai(name)
 
 
+@tool("whatsapp_read_chat", "Open one WhatsApp chat and read its recent messages (the ones WhatsApp has loaded, usually a "
+      "few dozen): who sent each, when, and whether the user's were read. Use for 'what did X say', 'has X seen my "
+      "message', 'read my chat with X'. Opening it marks new messages as read.",
+      {"name": ("string", "chat or contact name")}, ["name"])
+def t_whatsapp_read_chat(name):
+    return whatsapp.chat_for_ai(name)
+
+
 @tool("whatsapp_prepare", "Open WhatsApp with a message typed in but not sent (use when the user wants to check it first)",
       {"text": ("string", "message"), "name": ("string", "optional contact name")}, ["text"])
 def t_whatsapp(text, name=""):
@@ -547,7 +555,8 @@ def t_game_mode(on):
 
 
 PERSONAL_TOOLS = {n for n in TOOLS if n.startswith(("email_", "calendar_", "task", "discord_", "gmail_", "gcal_", "gtask",
-                                                    "github_", "notion_", "drive_", "slack_", "telegram_", "phone_notif"))}
+                                                    "github_", "notion_", "drive_", "slack_", "telegram_", "phone_notif",
+                                                    "whatsapp_chats", "whatsapp_read_chat"))}
 # Sends that skip the card when confirmations are off and the user's own words asked to send something.
 SEND_TOOLS = {"email_compose", "email_reply", "discord_post", "whatsapp_send", "github_create_issue", "slack_post",
               "telegram_send"}
@@ -1036,8 +1045,12 @@ class Brain:
             return ("I remember: " + "; ".join(mem[-8:]) + ".") if mem else "Nothing yet."
         self._qowner = "herald"
         if wr := whatsapp.parse_read(text):
-            self.store.log("action", "Read the WhatsApp chat list (on this PC)", agent="herald")
-            return whatsapp.reply_status(wr[1]) if wr[0] == "reply" else whatsapp.summary()
+            if wr[0] == "summary":
+                self.store.log("action", "Read the WhatsApp chat list (on this PC)", agent="herald")
+                return whatsapp.summary()
+            self.store.log("action", "Opened and read a WhatsApp chat (on this PC)", agent="herald")
+            return {"reply": whatsapp.chat_reply_status, "seen": whatsapp.chat_seen_status,
+                    "chat": whatsapp.chat_recap}[wr[0]](wr[1])
         if wa := whatsapp.parse(text):
             if settings.get("confirm_sends", False):
                 return whatsapp.draft_to(*wa)

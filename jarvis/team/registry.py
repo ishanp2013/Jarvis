@@ -20,7 +20,7 @@ AGENTS = {
         "You are Forge, Jarvis's maker. You turn requests into finished files saved in School Projects. " + _COMMON,
         "#ff8a5c", "hammer", (READ, FILES), 15),
     "herald": Specialist(
-        "herald", "Herald", "Messages: email, WhatsApp (sends, plus the chat list: who replied and unread), Discord, Slack, Telegram, calendar events and reply drafts.",
+        "herald", "Herald", "Messages: email, WhatsApp (sends, the chat list, and reading a whole chat), Discord, Slack, Telegram, calendar events and reply drafts.",
         "You are Herald, Jarvis's messenger. Send only what the user asked for in their own words; anything else becomes "
         "an approval card. Never invent addresses. " + _COMMON, "#c58cff", "envelope", (READ, SEND), 3, personal=True),
     "operator": Specialist(
@@ -52,7 +52,7 @@ for _agent, _names in {
     "scholar": ["my_tasks", "my_task_add", "my_task_done", "tasks_list", "task_add", "calendar_upcoming"],
     "forge": ["prepare_work"],
     "herald": ["email_unread", "email_search", "email_read", "email_compose", "email_reply", "calendar_add",
-               "discord_channels", "discord_read", "discord_post", "whatsapp_send", "whatsapp_prepare", "whatsapp_chats",
+               "discord_channels", "discord_read", "discord_post", "whatsapp_send", "whatsapp_prepare", "whatsapp_chats", "whatsapp_read_chat",
                "slack_channels", "slack_read", "slack_post", "telegram_messages", "telegram_send",
                "github_create_issue", "notion_add"],
     "operator": ["open_app", "switch_to_app", "close_app", "arrange_windows", "find_files", "press_button",
