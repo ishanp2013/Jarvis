@@ -267,12 +267,9 @@
       </div>
 
       <h4>Backups</h4>
-      <p class="muted">When a model reaches its limit (or runs out of credit, or its key stops working), Jarvis carries on with the next one here, then goes back once the first resets. They all get the same conversation and memories, because those are kept by Jarvis, not by the AI service. Each backup's key box appears above once you pick it.</p>
-      <div class="backups">
-        <label>Backup 1 <select data-set="llm_backup_1"><option value="">None</option><option value="gemini">Google Gemini</option><option value="openrouter">OpenRouter</option><option value="bazaarlink">BazaarLink</option><option value="orcarouter">OrcaRouter</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="anthropic">Anthropic Claude</option><option value="openai">OpenAI ChatGPT</option><option value="deepseek">DeepSeek</option><option value="xai">xAI Grok</option><option value="ollama">Ollama (on this PC)</option><option value="custom">Other OpenAI-compatible</option></select></label>
-        <label>Backup 2 <select data-set="llm_backup_2"><option value="">None</option><option value="gemini">Google Gemini</option><option value="openrouter">OpenRouter</option><option value="bazaarlink">BazaarLink</option><option value="orcarouter">OrcaRouter</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="anthropic">Anthropic Claude</option><option value="openai">OpenAI ChatGPT</option><option value="deepseek">DeepSeek</option><option value="xai">xAI Grok</option><option value="ollama">Ollama (on this PC)</option><option value="custom">Other OpenAI-compatible</option></select></label>
-        <label>Backup 3 <select data-set="llm_backup_3"><option value="">None</option><option value="gemini">Google Gemini</option><option value="openrouter">OpenRouter</option><option value="bazaarlink">BazaarLink</option><option value="orcarouter">OrcaRouter</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="anthropic">Anthropic Claude</option><option value="openai">OpenAI ChatGPT</option><option value="deepseek">DeepSeek</option><option value="xai">xAI Grok</option><option value="ollama">Ollama (on this PC)</option><option value="custom">Other OpenAI-compatible</option></select></label>
-      </div>
+      <p class="muted">Add as many as you like. When a model reaches its limit (or runs out of credit, or its key stops working), Jarvis carries on with the next one in this list, then goes back once the first resets. They all get the same conversation and memories, because Jarvis keeps those himself. Each backup can have its own key, so you can add the same service more than once.</p>
+      <div id="backup-list" class="backup-list"></div>
+      <button class="small" id="backup-add">+ Add backup</button>
       <div class="muted" id="ai-chain"></div>
 
       <label class="check"><input type="checkbox" data-set="stream_replies"> Start speaking while the AI is still writing (faster replies)</label>

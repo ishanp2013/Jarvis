@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -710,11 +711,31 @@ class Api:
         return settings.public()
 
     def ai_status(self):
-        """The AI models in order (main, then backups), which are resting after a limit, and which still need a key."""
+        """The AI models in order (main, then backups): labels, which are resting after a limit, which need a key."""
         u = ai.usage()
-        picked = [settings.get("llm_provider")] + [settings.get(k) for k in providers.BACKUP_SETTINGS]
-        return {"chain": providers.chain(), "active": u["active"], "resting": u["resting"],
-                "missing_keys": [n for n in dict.fromkeys(picked) if n in providers.PROVIDERS and not providers.ready(n)]}
+        slots = [settings.get("llm_provider")] + [f"backup:{b['id']}" for b in providers.backups()]
+        chain = providers.chain()
+        return {"chain": [{"slot": s, "label": providers.label(s), "resting": u["resting"].get(s, 0)} for s in chain],
+                "active": u["active"], "active_label": providers.label(u["active"]),
+                "backups": [{**b, "label": providers.label(f"backup:{b['id']}"),
+                             "own_key": bool(config.get_secret(providers.own_key_name(b["id"]))),
+                             "ready": providers.ready(f"backup:{b['id']}"),
+                             "in_use": f"backup:{b['id']}" in chain,
+                             "resting": u["resting"].get(f"backup:{b['id']}", 0)} for b in providers.backups()]}
+
+    def save_backups(self, items):
+        """The backup list from Settings, in order. Keys of removed backups are deleted from Credential Manager."""
+        clean = []
+        for b in items or []:
+            bid = re.sub(r"[^a-z0-9]", "", str(b.get("id", "")).lower())[:16]
+            if len(bid) >= 4 and b.get("provider") in providers.PROVIDERS:
+                clean.append({"id": bid, "provider": b["provider"], "model": str(b.get("model") or "").strip()[:200]})
+        gone = {b["id"] for b in providers.backups()} - {b["id"] for b in clean}
+        for bid in gone:
+            config.set_secret(providers.own_key_name(bid), "")
+        settings.update({"llm_backups": clean})
+        self._j.store.log("settings", f"AI backups: {len(clean)}")
+        return self.ai_status()
 
     def set_secret(self, name, value):
         config.set_secret(name, value.strip())

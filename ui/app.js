@@ -330,13 +330,71 @@ function bindSettings() {
 }
 
 function applyShow() {
-  const backups = [S.llm_backup_1, S.llm_backup_2, S.llm_backup_3];
-  $$("[data-show]").forEach((el) => {
-    const [k, v] = el.dataset.show.split("=");
-    // a backup's key and model settings show too, so it can be set up without switching to it
-    el.classList.toggle("hidden", S[k] !== v && !(k === "llm_provider" && backups.includes(v)));
-  });
+  $$("[data-show]").forEach((el) => { const [k, v] = el.dataset.show.split("="); el.classList.toggle("hidden", S[k] !== v); });
   $("#st-voice").textContent = S.tts_provider === "edge" ? S.edge_voice : S.tts_provider;
+}
+
+// ------------------------------------------------------------ AI backups: any number, each with its own key
+const BACKUP_PROVIDERS = [["openrouter", "OpenRouter"], ["bazaarlink", "BazaarLink"], ["orcarouter", "OrcaRouter"],
+  ["gemini", "Google Gemini"], ["groq", "Groq"], ["mistral", "Mistral"], ["anthropic", "Anthropic Claude"],
+  ["openai", "OpenAI ChatGPT"], ["deepseek", "DeepSeek"], ["xai", "xAI Grok"], ["ollama", "Ollama (on this PC)"],
+  ["custom", "Other OpenAI-compatible"]];
+const NO_KEY = ["ollama"];
+let BACKUPS = [];
+
+const until = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+function renderBackups(st) {
+  BACKUPS = st.backups.map((b) => ({ id: b.id, provider: b.provider, model: b.model || "" }));
+  const box = $("#backup-list");
+  if (!box) return;
+  box.innerHTML = "";
+  st.backups.forEach((b, i) => {
+    const row = document.createElement("div"); row.className = "backup-row";
+    const head = document.createElement("div"); head.className = "backup-head";
+    const num = document.createElement("b"); num.textContent = `Backup ${i + 1}`;
+    const sel = document.createElement("select");
+    BACKUP_PROVIDERS.forEach(([v, t]) => { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); });
+    sel.value = b.provider;
+    sel.onchange = () => { BACKUPS[i].provider = sel.value; BACKUPS[i].model = ""; saveBackups(); };
+    const up = document.createElement("button"); up.className = "small"; up.textContent = "\u25B2"; up.title = "Move up"; up.disabled = i === 0;
+    up.onclick = () => { [BACKUPS[i - 1], BACKUPS[i]] = [BACKUPS[i], BACKUPS[i - 1]]; saveBackups(); };
+    const down = document.createElement("button"); down.className = "small"; down.textContent = "\u25BC"; down.title = "Move down"; down.disabled = i === st.backups.length - 1;
+    down.onclick = () => { [BACKUPS[i + 1], BACKUPS[i]] = [BACKUPS[i], BACKUPS[i + 1]]; saveBackups(); };
+    const del = document.createElement("button"); del.className = "small"; del.textContent = "Remove";
+    del.onclick = () => { if (confirm(`Remove backup ${i + 1}? Its saved key is deleted too.`)) { BACKUPS.splice(i, 1); saveBackups(); } };
+    head.append(num, sel, up, down, del);
+
+    const model = document.createElement("input");
+    model.value = b.model || ""; model.placeholder = "Model: empty = " + (S[b.provider + "_model"] || "the usual one");
+    model.onchange = () => { BACKUPS[i].model = model.value.trim(); saveBackups(); };
+
+    const keyRow = document.createElement("span"); keyRow.className = "secret-row";
+    const key = document.createElement("input"); key.type = "password";
+    key.placeholder = b.own_key ? "own key saved securely (paste to replace)" : "paste this backup's API key, then Save";
+    const save = document.createElement("button"); save.className = "small"; save.textContent = "Save";
+    save.onclick = async () => { await api.set_secret(`backup_${b.id}_api_key`, key.value); key.value = ""; refreshChips(); };
+    keyRow.append(key, save);
+    if (NO_KEY.includes(b.provider)) keyRow.classList.add("hidden");
+
+    const status = document.createElement("div"); status.className = "muted";
+    status.textContent = b.resting ? `Resting until ${until(b.resting)} (reached its limit)` :
+      b.in_use ? (b.own_key || NO_KEY.includes(b.provider) ? "Ready" : "Ready, using the key saved for this service above") :
+      b.ready ? "Same as one above, so it's skipped" : "Needs an API key before it can be used";
+    row.append(head, model, keyRow, status);
+    box.appendChild(row);
+  });
+  const chain = $("#ai-chain");
+  if (chain) chain.textContent = st.chain.length ? "Order now: " + st.chain.map((c) => c.label + (c.resting ? ` (resting until ${until(c.resting)})` : "")).join(" \u2192 ") + "." : "";
+}
+
+async function saveBackups() {
+  renderBackups(await api.save_backups(BACKUPS));
+}
+
+function newBackupId() {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  return Array.from(crypto.getRandomValues(new Uint8Array(8)), (n) => chars[n % chars.length]).join("");
 }
 
 async function refreshChips(secrets) {
@@ -351,18 +409,10 @@ async function refreshChips(secrets) {
   else { ai.className = "chip on"; ai.textContent = "AI: " + (names[S.llm_provider] || S.llm_provider); }
   try {
     const st = await api.ai_status();
-    const label = (n) => names[n] || n;
     if (st.active && st.active !== S.llm_provider && S.llm_provider !== "off") {
-      ai.className = "chip mid"; ai.textContent = "AI: " + label(st.active) + " (backup)";
+      ai.className = "chip mid"; ai.textContent = "AI: " + st.active_label;
     }
-    const chain = $("#ai-chain");
-    if (chain) {
-      const until = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      const parts = st.chain.map((n) => label(n) + (st.resting[n] ? " (resting until " + until(st.resting[n]) + ")" : ""));
-      const missing = st.missing_keys.map(label);
-      chain.textContent = (parts.length ? "Order: " + parts.join(" \u2192 ") + "." : "") +
-        (missing.length ? " Needs a key before it can be used: " + missing.join(", ") + "." : "");
-    }
+    renderBackups(st);
   } catch (e) { /* no backups info */ }
   $$("[data-secret]").forEach((i) => { if (secrets[i.dataset.secret]) i.placeholder = "saved securely (paste to replace)"; });
 }
@@ -838,6 +888,8 @@ window.addEventListener("pywebviewready", async () => {
   const ev = $("#edge-voices");
   (await api.edge_voices()).forEach((v) => { const o = document.createElement("option"); o.value = o.textContent = v; ev.appendChild(o); });
   bindSettings(); wire();
+  const addBackup = $("#backup-add");
+  if (addBackup) addBackup.onclick = () => { BACKUPS.push({ id: newBackupId(), provider: "openrouter", model: "" }); saveBackups(); };
   setMic(init.mic); setState(init.state);
   $("#chip-net").className = "chip " + (navigator.onLine ? "on" : "off");
   $("#chip-wake").className = "chip " + (S.wake_word_enabled ? "on" : "off");

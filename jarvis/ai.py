@@ -177,10 +177,10 @@ def _complete_one(system, prompt, kind, max_tokens, agent):
     try:
         if p["kind"] == "anthropic":
             import anthropic
-            model = settings["anthropic_model"]
+            model = providers.model(providers.current())
             extra = {"output_config": {"effort": settings["anthropic_effort"]}} \
                 if re.match(r"claude-(?:opus|sonnet|haiku|fable)-5|claude-opus-4-[5-8]|claude-sonnet-4-6", model) else {}
-            client = anthropic.Anthropic(api_key=get_secret("anthropic_api_key"), timeout=300)
+            client = anthropic.Anthropic(api_key=providers.key(providers.current()), timeout=300)
             with client.messages.stream(model=model, max_tokens=max_tokens, system=system,
                                         messages=[{"role": "user", "content": prompt}], **extra) as s:
                 resp = s.get_final_message()
@@ -190,18 +190,18 @@ def _complete_one(system, prompt, kind, max_tokens, agent):
         if p["kind"] == "gemini":
             from google import genai
             from google.genai import types
-            client = genai.Client(api_key=get_secret("gemini_api_key"))
-            resp = client.models.generate_content(model=settings["gemini_model"], contents=prompt,
+            client = genai.Client(api_key=providers.key(providers.current()))
+            resp = client.models.generate_content(model=providers.model(providers.current()), contents=prompt,
                                                   config=types.GenerateContentConfig(system_instruction=system, temperature=0.3))
             return resp.text or ""
         if p["kind"] == "ollama":
             r = httpx.post(settings["ollama_url"] + "/api/chat", timeout=600, json={
-                "model": settings["ollama_model"], "stream": False,
+                "model": providers.model(providers.current()), "stream": False,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]})
             r.raise_for_status()
             return r.json()["message"].get("content", "")
         headers = {"Content-Type": "application/json", "X-Title": "Jarvis"}
-        if key := get_secret(p["key"]):
+        if key := providers.key(p):
             headers["Authorization"] = f"Bearer {key}"
         r = httpx.post(providers.base_url(p) + "/chat/completions", headers=headers, timeout=300, json={
             "model": providers.model(p), "temperature": 0.3, "max_tokens": max_tokens,

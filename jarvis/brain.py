@@ -592,10 +592,6 @@ Things the user asked you to remember:
 {memories}"""
 
 
-def PROVIDERS_LABEL(name):
-    return providers.PROVIDERS.get(name, {}).get("label", name)
-
-
 class Brain:
     def __init__(self, store, emit, speak, listener_ref):
         self.store, self.emit, self.speak = store, emit, speak
@@ -1443,7 +1439,7 @@ class Brain:
                     log.warning("LLM error (%s, %s): %s", n, why, str(e)[:300])
                     if why:
                         ai.rest(n, why)
-                    nxt = PROVIDERS_LABEL(names[i + 1]) if i + 1 < len(names) else None
+                    nxt = providers.label(names[i + 1]) if i + 1 < len(names) else None
                     if why is None or nxt is None or self._tool_runs:
                         msg = self._explain_failure(e, p)
                         if why and nxt and self._tool_runs:
@@ -1501,7 +1497,7 @@ class Brain:
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=get_secret("gemini_api_key"))
+        client = genai.Client(api_key=providers.key(providers.current()))
         decls = [types.FunctionDeclaration(
             name=t["name"], description=t["desc"],
             parameters_json_schema={"type": "object", "properties": {k: {"type": v[0], "description": v[1]} for k, v in t["params"].items()},
@@ -1516,7 +1512,7 @@ class Brain:
             ai.count("chat", self.acting or "jarvis")
             if self._live:
                 parts, reply = [], ""
-                for chunk in client.models.generate_content_stream(model=settings["gemini_model"], contents=contents, config=config):
+                for chunk in client.models.generate_content_stream(model=providers.model(providers.current()), contents=contents, config=config):
                     cand = (chunk.candidates or [None])[0]
                     for part in (cand.content.parts if cand and cand.content and cand.content.parts else []):
                         parts.append(part)
@@ -1528,7 +1524,7 @@ class Brain:
                     return reply
                 contents.append(types.Content(role="model", parts=parts))
             else:
-                resp = client.models.generate_content(model=settings["gemini_model"], contents=contents, config=config)
+                resp = client.models.generate_content(model=providers.model(providers.current()), contents=contents, config=config)
                 calls = resp.function_calls or []
                 if not calls:
                     return resp.text or ""
@@ -1550,7 +1546,7 @@ class Brain:
         msgs += [{"role": m["role"], "content": m["text"]} for m in self._history()]
         msgs.append({"role": "user", "content": text})
         for _ in range(6):
-            body = {"model": settings["ollama_model"], "messages": msgs, "tools": tools, "stream": bool(self._live)}
+            body = {"model": providers.model(providers.current()), "messages": msgs, "tools": tools, "stream": bool(self._live)}
             if self._live:
                 msg = {"role": "assistant", "content": "", "tool_calls": []}
                 with httpx.stream("POST", settings["ollama_url"] + "/api/chat", json=body, timeout=180) as r:
@@ -1587,7 +1583,7 @@ class Brain:
     @staticmethod
     def _openai_headers(p):
         headers = {"Content-Type": "application/json", "X-Title": "Jarvis"}
-        if key := get_secret(p["key"]):
+        if key := providers.key(p):
             headers["Authorization"] = f"Bearer {key}"
         return headers
 
@@ -1673,8 +1669,8 @@ class Brain:
         """Claude through the official Anthropic SDK, with Jarvis's tools."""
         import anthropic
 
-        model = settings["anthropic_model"]
-        client = anthropic.Anthropic(api_key=get_secret("anthropic_api_key"), timeout=120)
+        model = providers.model(providers.current())
+        client = anthropic.Anthropic(api_key=providers.key(providers.current()), timeout=120)
         tools = [{"name": t["name"], "description": t["desc"], "input_schema": {
             "type": "object", "properties": {k: {"type": v[0], "description": v[1]} for k, v in t["params"].items()},
             "required": t["required"]}} for t in self._tools()]
@@ -1745,27 +1741,27 @@ class Brain:
             if p["kind"] == "gemini":
                 from google import genai
                 from google.genai import types
-                client = genai.Client(api_key=get_secret("gemini_api_key"))
-                resp = client.models.generate_content(model=override or settings["gemini_model"], contents=[types.Content(
+                client = genai.Client(api_key=providers.key(providers.current()))
+                resp = client.models.generate_content(model=override or providers.model(providers.current()), contents=[types.Content(
                     role="user", parts=[types.Part.from_bytes(data=png, mime_type="image/png"), types.Part(text=prompt)])])
                 answer = resp.text or ""
             elif p["kind"] == "anthropic":
                 import anthropic
-                client = anthropic.Anthropic(api_key=get_secret("anthropic_api_key"), timeout=120)
-                model = override or settings["anthropic_model"]
+                client = anthropic.Anthropic(api_key=providers.key(providers.current()), timeout=120)
+                model = override or providers.model(providers.current())
                 resp = client.beta.messages.create(model=model, max_tokens=2000, **self._anthropic_extra(model), messages=[
                     {"role": "user", "content": [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}},
                                                  {"type": "text", "text": prompt}]}])
                 answer = " ".join(b.text for b in resp.content if b.type == "text")
             elif p["kind"] == "ollama":
                 r = httpx.post(settings["ollama_url"] + "/api/chat", timeout=300, json={
-                    "model": override or settings["ollama_model"], "stream": False,
+                    "model": override or providers.model(providers.current()), "stream": False,
                     "messages": [{"role": "user", "content": prompt, "images": [b64]}]})
                 r.raise_for_status()
                 answer = r.json()["message"].get("content", "")
             else:
                 model = override or providers.model(p)
-                choices = self._openrouter_vision_models(model) if providers.name() == "openrouter" and not override else [model]
+                choices = self._openrouter_vision_models(model) if providers.current()["provider"] == "openrouter" and not override else [model]
                 answer, err = None, ""
                 for m in choices:
                     r = httpx.post(providers.base_url(p) + "/chat/completions", headers=self._openai_headers(p), timeout=120, json={

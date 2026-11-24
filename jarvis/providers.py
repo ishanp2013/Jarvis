@@ -4,10 +4,11 @@ API keys are separate from chat subscriptions: a ChatGPT Plus or Claude Pro plan
 use, and most APIs bill per use. Free options: Gemini's free tier, Groq's, OpenRouter's, BazaarLink's and
 OrcaRouter's free models, Mistral's free tier, and Ollama or LM Studio running on your own PC.
 
-Backups: up to three more providers, in order. When one hits its limit (or runs out of credit, or its key
+Backups: as many as you like, in order, each with its own key and model. When one hits its limit (or runs out of credit, or its key
 is rejected), Jarvis carries on with the next. The conversation lives in Jarvis's own database, so every
 model gets the same chat history and memories."""
 import contextlib
+import re
 import threading
 
 from .config import get_secret, settings
@@ -36,51 +37,97 @@ PROVIDERS = {
                    "model": "custom_model", "url_setting": "custom_url", "key_optional": True},
 }
 for _n, _p in PROVIDERS.items():
-    _p["name"] = _n
+    _p["name"] = _p["provider"] = _n
 API_KEYS = tuple(p["key"] for p in PROVIDERS.values() if "key" in p)
-BACKUP_SETTINGS = ("llm_backup_1", "llm_backup_2", "llm_backup_3")
+BACKUP_KEY = re.compile(r"^backup_[a-z0-9]{4,16}_api_key$")  # each backup's own key in Credential Manager
 
 _local = threading.local()
 
 
+def backups():
+    """The backups from Settings, in order: [{"id", "provider", "model"}]. Older settings had three fixed slots."""
+    items = settings.get("llm_backups")
+    if items is None:
+        items = [{"id": f"old{i}", "provider": settings.get(k), "model": ""}
+                 for i, k in enumerate(("llm_backup_1", "llm_backup_2", "llm_backup_3"), 1) if settings.get(k)]
+    return [b for b in (items or []) if isinstance(b, dict) and b.get("provider") in PROVIDERS and b.get("id")]
+
+
+def own_key_name(backup_id):
+    return f"backup_{backup_id}_api_key"
+
+
+def resolve(slot):
+    """A provider by slot: the main choice ("openrouter") or a backup ("backup:<id>"), with that backup's own key
+    (or the provider's usual key if it has none) and model (or the provider's usual model)."""
+    if not slot or not slot.startswith("backup:"):
+        return PROVIDERS.get(slot)
+    bid = slot.split(":", 1)[1]
+    items = backups()
+    for i, b in enumerate(items, 1):
+        if b["id"] == bid:
+            p = dict(PROVIDERS[b["provider"]])
+            own = own_key_name(bid)
+            if "key" in p and get_secret(own):
+                p["key"] = own
+            p.update(name=slot, label=f"{p['label']} (backup {i})", model_value=(b.get("model") or "").strip())
+            return p
+    return None
+
+
 def name():
-    """The provider this request is using: a backup while one is standing in, otherwise the main choice."""
+    """The slot this request is using: a backup while one is standing in, otherwise the main choice."""
     return getattr(_local, "name", None) or settings.get("llm_provider")
 
 
 @contextlib.contextmanager
-def use(provider_name):
+def use(slot):
     """Run the requests inside this block (on this thread) with another provider."""
     prev = getattr(_local, "name", None)
-    _local.name = provider_name
+    _local.name = slot
     try:
-        yield PROVIDERS.get(provider_name)
+        yield resolve(slot)
     finally:
         _local.name = prev
 
 
 def current():
-    return PROVIDERS.get(name())
+    return resolve(name())
+
+
+def label(slot):
+    p = resolve(slot)
+    return p["label"] if p else str(slot)
 
 
 def available(provider_name=None):
     return ready(provider_name or name())
 
 
-def ready(provider_name):
+def ready(slot):
     """Whether a provider is set up: it runs on this PC, or has its key (or needs none)."""
-    p = PROVIDERS.get(provider_name)
+    p = resolve(slot)
     if not p:
         return False
-    return bool(p.get("local") or p.get("key_optional") and bool(base_url(p)) or get_secret(p["key"]))
+    return bool(p.get("local") or p.get("key_optional") and bool(base_url(p)) or key(p))
+
+
+def key(p):
+    return get_secret(p["key"]) if p and "key" in p else ""
 
 
 def chain():
-    """The main provider, then the backups, in order: only ones that are set up, each once."""
-    out = []
-    for n in [settings.get("llm_provider")] + [settings.get(k) for k in BACKUP_SETTINGS]:
-        if n in PROVIDERS and n not in out and ready(n):
-            out.append(n)
+    """The main provider, then the backups, in order: only ones that are set up. A backup that is exactly the
+    same as one before it (same service, key and model) is skipped."""
+    out, seen = [], set()
+    for slot in [settings.get("llm_provider")] + [f"backup:{b['id']}" for b in backups()]:
+        p = resolve(slot)
+        if not p or not ready(slot):
+            continue
+        sig = (p["provider"], p.get("key"), model(p))
+        if sig not in seen:
+            seen.add(sig)
+            out.append(slot)
     return out
 
 
@@ -98,4 +145,4 @@ def base_url(p):
 
 
 def model(p):
-    return settings.get(p["model"])
+    return (p.get("model_value") if p else "") or (settings.get(p["model"]) if p else "")

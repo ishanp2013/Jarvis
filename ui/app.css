@@ -305,3 +305,9 @@ ul.mini li button { margin-left: 6px; }
 @media (max-width: 1050px) { main { grid-template-columns: 190px minmax(0, 1fr) 320px; } .round { width: 60px; height: 60px; }
   .brand-sub { display: none; } .today-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* AI backups */
+.backup-list { display: flex; flex-direction: column; gap: 10px; margin: 8px 0; }
+.backup-row { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--line, rgba(255,176,64,.25)); border-radius: 8px; }
+.backup-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.backup-head select { flex: 1; min-width: 140px; }

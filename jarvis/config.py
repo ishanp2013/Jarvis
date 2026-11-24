@@ -1,6 +1,7 @@
 """Settings (plain JSON) and secrets (Windows Credential Manager via keyring)."""
 import json
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -52,9 +53,7 @@ DEFAULTS = {
     "openrouter_model": "openrouter/auto",
     "bazaarlink_model": "auto:free",
     "orcarouter_model": "orcarouter/free",
-    "llm_backup_1": "",              # backups, in order: used when the one before hits its limit
-    "llm_backup_2": "",
-    "llm_backup_3": "",
+    "llm_backups": None,             # [{"id", "provider", "model"}] in order; None = not set yet (reads old llm_backup_1..3)
     "groq_model": "llama-3.3-70b-versatile",
     "mistral_model": "mistral-small-latest",
     "deepseek_model": "deepseek-chat",
@@ -167,7 +166,7 @@ def get_secret(name: str) -> str:
 
 
 def set_secret(name: str, value: str):
-    if name not in SECRET_KEYS:
+    if name not in SECRET_KEYS and not re.match(r"^backup_[a-z0-9]{4,16}_api_key$", name):
         raise ValueError("unknown secret")
     if value:
         keyring.set_password(APP_NAME, name, value)
@@ -179,7 +178,11 @@ def set_secret(name: str, value: str):
 
 
 def secret_status():
-    return {k: bool(get_secret(k)) for k in SECRET_KEYS}
+    out = {k: bool(get_secret(k)) for k in SECRET_KEYS}
+    for b in settings.get("llm_backups") or []:  # each backup's own key
+        if isinstance(b, dict) and re.match(r"^[a-z0-9]{4,16}$", str(b.get("id", ""))):
+            out[f"backup_{b['id']}_api_key"] = bool(get_secret(f"backup_{b['id']}_api_key"))
+    return out
 
 
 settings = Settings()

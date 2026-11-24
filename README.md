@@ -111,7 +111,7 @@ Go to **Settings → AI model**, pick a provider, paste its key, press **Save**.
 | DeepSeek, xAI Grok | Paid per use | their developer consoles |
 | Ollama / LM Studio | Free, offline, on your PC | <https://ollama.com>, then `ollama pull qwen2.5:3b` |
 
-**Backups:** under **Settings → AI model → Backups**, pick up to three more providers in order and save each one's key (its key box appears when you pick it). When a model hits its limit, runs out of credit or its key stops working, Jarvis carries on with the next one and goes back once the first resets (free plans: midnight UTC). Every model gets the same conversation and memories, because Jarvis keeps those himself. If a request had already done something (sent a message, moved a file) when the limit hit, it isn't repeated: Jarvis switches and asks you to say it again.
+**Backups:** under **Settings → AI model → Backups**, press **+ Add backup** as many times as you like. For each one, pick the service, paste its key and press **Save** (empty model = that service's usual one). The arrows change the order. When a model hits its limit, runs out of credit or its key stops working, Jarvis carries on with the next one and goes back once the first resets (free plans: midnight UTC). Every model gets the same conversation and memories, because Jarvis keeps those himself. If a request had already done something (sent a message, moved a file) when the limit hit, it isn't repeated: Jarvis switches and asks you to say it again.
 
 > **API keys are separate from subscriptions.** ChatGPT Plus, Claude Pro or Google AI Pro don't include API use. Never use someone else's account or key.
 

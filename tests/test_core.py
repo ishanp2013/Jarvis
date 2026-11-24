@@ -342,8 +342,9 @@ class BackupTests(unittest.TestCase):
         self.providers = providers
         ai.USAGE_FILE.unlink(missing_ok=True)
         self.addCleanup(lambda: ai.USAGE_FILE.unlink(missing_ok=True))
-        self.values = {"llm_provider": "openrouter", "llm_backup_1": "bazaarlink", "llm_backup_2": "orcarouter",
-                       "llm_backup_3": "groq", "private_mode": False, "team_mode": False}
+        self.values = {"llm_provider": "openrouter", "private_mode": False, "team_mode": False, "llm_backups": [
+            {"id": "aaaa1", "provider": "bazaarlink", "model": ""}, {"id": "bbbb2", "provider": "orcarouter", "model": ""},
+            {"id": "cccc3", "provider": "groq", "model": ""}]}
         self.keys = {"openrouter_api_key", "bazaarlink_api_key", "orcarouter_api_key"}  # groq has no key
         for p in (mock.patch.object(settings, "get", lambda k, d=None: self.values.get(k, settings._data.get(k, d))),
                   mock.patch.object(providers, "get_secret", lambda n: "k" if n in self.keys else "")):
@@ -367,28 +368,37 @@ class BackupTests(unittest.TestCase):
         self.addCleanup(p.stop)
 
     def test_chain_order_skips_missing_keys(self):
-        self.assertEqual(self.providers.chain(), ["openrouter", "bazaarlink", "orcarouter"])
-        self.values["llm_backup_2"] = "openrouter"  # listed twice: used once
-        self.assertEqual(self.providers.chain(), ["openrouter", "bazaarlink"])
+        self.assertEqual(self.providers.chain(), ["openrouter", "backup:aaaa1", "backup:bbbb2"])
+        # the same service again with the same key and model: skipped; with its own key: a separate backup
+        self.values["llm_backups"].append({"id": "dddd4", "provider": "openrouter", "model": ""})
+        self.assertEqual(self.providers.chain(), ["openrouter", "backup:aaaa1", "backup:bbbb2"])
+        self.keys.add("backup_dddd4_api_key")
+        self.assertEqual(self.providers.chain()[-1], "backup:dddd4")
+        p = self.providers.resolve("backup:dddd4")
+        self.assertEqual((p["key"], p["label"], p["provider"]), ("backup_dddd4_api_key", "OpenRouter (backup 4)", "openrouter"))
+        # a backup's own model
+        self.values["llm_backups"][0]["model"] = "qwen/qwen3.7-flash:free"
+        self.assertEqual(self.providers.model(self.providers.resolve("backup:aaaa1")), "qwen/qwen3.7-flash:free")
+        self.assertEqual(self.providers.model(self.providers.resolve("backup:bbbb2")), settings._data.get("orcarouter_model", "orcarouter/free"))
 
     def test_switches_with_the_same_conversation(self):
         reply, _ = self.brain._llm("when is my exam?")
-        self.assertEqual(reply, "Friday (from bazaarlink)")
-        self.assertEqual([c[0] for c in self.calls], ["openrouter", "bazaarlink"])
+        self.assertEqual(reply, "Friday (from backup:aaaa1)")
+        self.assertEqual([c[0] for c in self.calls], ["openrouter", "backup:aaaa1"])
         self.assertEqual(self.calls[0][1:], self.calls[1][1:])  # same request, same history
         self.assertIn("my exam is on friday", self.calls[1][2])
         self.assertTrue(ai.is_down("openrouter"))
-        self.assertEqual(ai.active(), "bazaarlink")
+        self.assertEqual(ai.active(), "backup:aaaa1")
         self.calls.clear()
         self.brain._llm("thanks")  # the resting one isn't tried again today
-        self.assertEqual([c[0] for c in self.calls], ["bazaarlink"])
-        self.assertTrue(any("Switching to BazaarLink" in str(e[1]) for e in self.events if e[0] == "activity"))
+        self.assertEqual([c[0] for c in self.calls], ["backup:aaaa1"])
+        self.assertTrue(any("Switching to BazaarLink (backup 1)" in str(e[1]) for e in self.events if e[0] == "activity"))
 
     def test_all_resting_says_limit(self):
-        self.fail.update({n: RuntimeError("429 too many requests") for n in ("bazaarlink", "orcarouter")})
+        self.fail.update({n: RuntimeError("429 too many requests") for n in ("backup:aaaa1", "backup:bbbb2")})
         reply, _ = self.brain._llm("hi")
         self.assertIn("usage limit", reply)
-        self.assertEqual([c[0] for c in self.calls], ["openrouter", "bazaarlink", "orcarouter"])
+        self.assertEqual([c[0] for c in self.calls], ["openrouter", "backup:aaaa1", "backup:bbbb2"])
         self.assertTrue(ai.usage()["exhausted"])
 
     def test_no_switch_for_other_errors_or_after_a_tool_ran(self):
@@ -413,11 +423,23 @@ class BackupTests(unittest.TestCase):
                 raise RuntimeError("OpenRouter's limit has been reached (429): per-day")
             return "summary by " + self.providers.name()
         with mock.patch.object(ai, "_complete_one", one):
-            self.assertEqual(ai.complete("s", "p", kind="chat"), "summary by bazaarlink")
-            self.values["llm_backup_1"] = self.values["llm_backup_2"] = ""
+            self.assertEqual(ai.complete("s", "p", kind="chat"), "summary by backup:aaaa1")
+            self.values["llm_backups"] = []
             ai.USAGE_FILE.unlink(missing_ok=True)
             with self.assertRaises(ai.OutOfBudget):
                 ai.complete("s", "p", kind="chat")
+
+    def test_old_three_slot_settings_still_work(self):
+        self.values.pop("llm_backups")
+        self.values.update({"llm_backups": None, "llm_backup_1": "orcarouter", "llm_backup_2": ""})
+        self.assertEqual(self.providers.chain(), ["openrouter", "backup:old1"])
+
+    def test_backup_keys_are_allowed_secrets(self):
+        from jarvis import config
+        with mock.patch.object(config.keyring, "set_password", lambda *a: None):
+            config.set_secret("backup_ab12cd34_api_key", "x")
+            with self.assertRaises(ValueError):
+                config.set_secret("backup_../evil_api_key", "x")
 
     def test_failure_kinds(self):
         import httpx
@@ -443,7 +465,7 @@ class ProviderTests(unittest.TestCase):
         p = mock.patch.object(settings, "get", lambda k, d=None: values.get(k, settings._data.get(k, d)))
         p.start()
         self.addCleanup(p.stop)
-        k = mock.patch("jarvis.brain.get_secret", lambda name: "test-key")
+        k = mock.patch("jarvis.providers.get_secret", lambda name: "test-key")
         k.start()
         self.addCleanup(k.stop)
 
@@ -1478,7 +1500,7 @@ class DelegationTests(unittest.TestCase):
         values = {"llm_provider": "groq", "private_mode": False, "team_mode": True, "confirm_sends": False}
         self.values = values
         for p in (mock.patch.object(settings, "get", lambda k, d=None: values.get(k, settings._data.get(k, d))),
-                  mock.patch("jarvis.brain.get_secret", lambda name: "test-key"),
+                  mock.patch("jarvis.providers.get_secret", lambda name: "test-key"),
                   mock.patch.dict(TOOLS["system_info"], fn=lambda: self.ran.append("system_info") or {"cpu_percent": 5}),
                   mock.patch.object(ai.providers, "is_cloud", lambda: True),
                   mock.patch("jarvis.brain.web.search", lambda q, max_results=5: [
