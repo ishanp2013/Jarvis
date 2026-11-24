@@ -1155,6 +1155,21 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(self.sources.is_school({"source": "gmail", "address": "x@school.edu"}, pats))
         self.assertTrue(self.sources.is_school({"source": "classroom"}, []))
         self.assertFalse(self.sources.is_school({"source": "gmail", "address": "x@gmail.com", "sender": "Bob"}, pats))
+        # Classroom's own emails, forwarded from a school account that can't be connected: always school
+        self.assertTrue(self.sources.is_school({"source": "gmail", "address": "no-reply@classroom.google.com"}, []))
+        self.assertFalse(self.sources.is_school({"source": "gmail", "address": "x@classroom.google.com.evil.com"}, []))
+
+    def test_forwarded_classroom_mail_is_fetched_once(self):
+        from jarvis.tools import google
+        mail = lambda i, addr: {"id": i, "from": "Ms Rao (Classroom)", "from_address": addr, "subject": f"New assignment {i}",
+                                "preview": "Due Nov 28", "received": "2026-11-24"}
+        results = {"in:inbox newer_than:3d": [mail("a", "no-reply@classroom.google.com"), mail("b", "friend@gmail.com")],
+                   "from:classroom.google.com newer_than:7d -in:trash -in:spam": [mail("a", "no-reply@classroom.google.com"),
+                                                                                 mail("c", "no-reply@classroom.google.com")]}
+        with mock.patch.object(google, "search_mail", lambda q, n: results[q]):
+            items = self.sources._gmail()
+        self.assertEqual([i["ext_id"] for i in items], ["a", "b", "c"])
+        self.assertEqual([self.sources.is_school(i, []) for i in items], [True, False, True])
 
 
 class TriageParsingTests(unittest.TestCase):

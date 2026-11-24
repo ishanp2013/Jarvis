@@ -167,13 +167,24 @@ All connections are optional and use each service's **official** sign-in or API.
 5. In Jarvis → **Connections → Google**: paste the client ID, paste the secret and press **Save**, then press **Sign in**.
 6. On Google's page you'll see *"Google hasn't verified this app"*. That's normal for your own app: click **Continue** and tick every box.
 
-While the app is in Testing mode, Google asks you to sign in again every 7 days.
+While the app is in Testing mode, Google makes the sign-in expire every 7 days (Jarvis then says "Google sign-in has expired", and background checks of Gmail stop). To stop that, go to **Google Auth Platform → Audience** and press **Publish app** (status *In production*). It stays your private, unverified app: you still see the "hasn't verified" page when signing in, but the sign-in no longer expires weekly. Then sign in again in Jarvis once.
 
 ### Google Classroom (school account)
 1. In the same Google Cloud project, enable the **Google Classroom API**.
 2. Add your **school** email under **Test users**.
 3. Jarvis → **Connections → Google Classroom → Sign in with school account**, and choose your school account.
-4. If Google says *"Access blocked"*, your school doesn't allow outside apps, and only the school's IT admin can change that. Jarvis can still learn about Classroom posts from Classroom's emails and phone notifications.
+4. If Google says *"Access blocked"*, your school doesn't allow outside apps, and only the school's IT admin can change that. Use **Classroom by email** below instead.
+
+#### Classroom by email (when the school account can't be connected)
+Classroom emails you about new work, announcements, teacher comments and due dates. Forward **only those** from your school Gmail to your personal Gmail, and Scholar picks them up in the background (every 45 minutes), turning new work into tasks with due dates. Nothing connects to your school account.
+
+1. **Classroom → ⚙️ Settings → Notifications**: turn on **Allow email notifications** (and the kinds you want).
+2. **School Gmail → ⚙️ → See all settings → Forwarding and POP/IMAP → Add a forwarding address**: enter your personal Gmail. Google emails a confirmation code to your personal Gmail; open that email and confirm.
+3. Still in that tab, leave **Disable forwarding** selected and save. (This keeps the rest of your school mail where it is; the filter below forwards only Classroom's emails.)
+4. **School Gmail → search box → Show search options**: in **From** type `classroom.google.com`, then **Create filter** → tick **Forward it to** and choose your personal Gmail → **Create filter**.
+5. Make sure your personal Gmail is connected in Jarvis (**Connections → Google**) and the sign-in hasn't expired (see above).
+
+If your school ever turns forwarding off, Gmail shows it on that settings tab; nothing breaks in Jarvis, the Classroom emails just stop arriving.
 
 ### Microsoft: Outlook.com, Calendar, To Do
 1. Go to <https://entra.microsoft.com> with your **personal** Microsoft account. If it asks for payment details, stop.

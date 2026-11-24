@@ -1,5 +1,6 @@
-"""Where the agent looks: Google Classroom (school account), Gmail, Outlook, phone notifications (WhatsApp
-groups and the like, through KDE Connect) and the Discord channels you selected.
+"""Where the agent looks: Google Classroom (school account), Gmail (including Classroom's emails forwarded from a
+school account that can't be connected), Outlook, phone notifications (WhatsApp groups and the like, through
+KDE Connect) and the Discord channels you selected.
 
 Each collector returns only items it hasn't seen before. Every item is marked school or not, using your
 list of school senders (Settings -> Agent). Only school items are ever sent to the AI."""
@@ -18,8 +19,15 @@ def school_patterns():
     return [p.strip().lower() for p in re.split(r"[\n,;]", settings.get("agent_school_senders") or "") if p.strip()]
 
 
+# Google Classroom's own emails (new work, announcements, comments, due-date reminders). A school account that
+# can't be connected can forward just these to your personal Gmail, which Jarvis reads.
+CLASSROOM_MAIL = re.compile(r"@classroom\.google\.com\s*$|^classroom\.google\.com$", re.I)
+
+
 def is_school(item, patterns=None):
     if item["source"] == "classroom":
+        return True
+    if CLASSROOM_MAIL.search(str(item.get("address", "")).strip()):
         return True
     pats = school_patterns() if patterns is None else patterns
     hay = " ".join(str(item.get(k, "")) for k in ("sender", "address", "group")).lower()
@@ -27,10 +35,15 @@ def is_school(item, patterns=None):
 
 
 def _gmail():
-    out = []
-    for m in google.search_mail("in:inbox newer_than:3d", 25):
-        out.append({"source": "gmail", "ext_id": m["id"], "sender": m["from"], "address": m["from_address"],
-                    "title": m["subject"], "text": m["preview"], "when": m["received"], "url": ""})
+    out, ids = [], set()
+    # the inbox, plus Classroom emails wherever a filter put them (forwarded ones can skip the inbox)
+    for q in ("in:inbox newer_than:3d", "from:classroom.google.com newer_than:7d -in:trash -in:spam"):
+        for m in google.search_mail(q, 25):
+            if m["id"] in ids:
+                continue
+            ids.add(m["id"])
+            out.append({"source": "gmail", "ext_id": m["id"], "sender": m["from"], "address": m["from_address"],
+                        "title": m["subject"], "text": m["preview"], "when": m["received"], "url": ""})
     return out
 
 
