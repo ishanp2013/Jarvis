@@ -1950,5 +1950,18 @@ class SystemPowerTests(unittest.TestCase):
 
 
 
+class MisheardTests(unittest.TestCase):
+    def test_unread_heard_as_android(self):
+        from jarvis import speech
+        from jarvis.tools import whatsapp
+        fixed = speech.fix_misheard("Do I have any Android messages from my dad in WhatsApp?")
+        self.assertEqual(fixed, "Do I have any unread messages from my dad in WhatsApp?")
+        self.assertEqual(whatsapp.parse_read(fixed), ("reply", "dad"))
+        self.assertEqual(speech.fix_misheard("read my android emails"), "read my unread emails")
+        self.assertEqual(speech.fix_misheard("any and read chats on WhatsApp"), "any unread chats on WhatsApp")
+        for keep in ("find my Android phone", "open Android Studio", "is my android connected"):
+            self.assertEqual(speech.fix_misheard(keep), keep)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

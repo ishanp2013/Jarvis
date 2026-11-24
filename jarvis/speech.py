@@ -65,6 +65,19 @@ class WakeWord:
 # ---------------------------------------------------------------- speech to text
 _HALLUCINATIONS = {"", "you", "thank you.", "thanks for watching!", "thank you for watching.", "bye.", "."}
 
+# Words the speech model keeps getting wrong, fixed only where the meaning is clear ("my Android phone" stays).
+_MISHEARD = [
+    (re.compile(r"\b(?:android|and read|an read|on read)(?=\s+(?:messages?|chats?|texts?|emails?|mails?|notifications?)\b)", re.I), "unread"),
+]
+_STT_HINT = ("Hey Jarvis, open Opera GX. Launch Discord. Open YouTube. Do I have any unread messages on WhatsApp? "
+             "Read my unread emails.")
+
+
+def fix_misheard(text):
+    for pattern, word in _MISHEARD:
+        text = pattern.sub(word, text)
+    return text
+
 
 class STT:
     def __init__(self):
@@ -94,9 +107,9 @@ class STT:
             audio = audio_int16.astype(np.float32) / 32768.0
             segs, _ = model.transcribe(audio, language="en", beam_size=1, vad_filter=False,
                                        condition_on_previous_text=False,
-                                       initial_prompt="Hey Jarvis, open Opera GX. Launch Discord. Open YouTube.")
+                                       initial_prompt=_STT_HINT)
             text = " ".join(s.text for s in segs if s.no_speech_prob < 0.6).strip()
-        return "" if text.lower() in _HALLUCINATIONS else text
+        return "" if text.lower() in _HALLUCINATIONS else fix_misheard(text)
 
 
 # ---------------------------------------------------------------- text to speech

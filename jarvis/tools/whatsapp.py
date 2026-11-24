@@ -38,7 +38,7 @@ _READ = [
     # "has sam replied (to my message) on whatsapp", "did sam text me back", "has sam send any replies"
     re.compile(r"^(?:has|have|did)\s+(?P<name>.+?)\s+(?:sen[dt]|repl|respond|answer|text|messag|writ|wrote|got back|said|say|seen|read|opened|looked)", re.I),
     # "any reply from sam on whatsapp", "did i get a message from sam"
-    re.compile(r"\b(?:any|a|an)\s+(?:new\s+)?(?:repl(?:y|ies)|messages?|response|answer|texts?)\s+from\s+(?P<name>.+?)" + _WA + r"?$", re.I),
+    re.compile(r"\b(?:any|a|an)\s+(?:(?:new|unread)\s+)?(?:repl(?:y|ies)|messages?|response|answer|texts?)\s+from\s+(?P<name>.+?)" + _WA + r"?$", re.I),
     # "what did sam say on whatsapp"
     re.compile(r"^what\s+did\s+(?P<name>.+?)\s+(?:say|send|reply|write|text)", re.I),
     # "read my chat with sam on whatsapp", "open my whatsapp chat with sam", "what's in my chat with sam"
