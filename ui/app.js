@@ -330,7 +330,12 @@ function bindSettings() {
 }
 
 function applyShow() {
-  $$("[data-show]").forEach((el) => { const [k, v] = el.dataset.show.split("="); el.classList.toggle("hidden", S[k] !== v); });
+  const backups = [S.llm_backup_1, S.llm_backup_2, S.llm_backup_3];
+  $$("[data-show]").forEach((el) => {
+    const [k, v] = el.dataset.show.split("=");
+    // a backup's key and model settings show too, so it can be set up without switching to it
+    el.classList.toggle("hidden", S[k] !== v && !(k === "llm_provider" && backups.includes(v)));
+  });
   $("#st-voice").textContent = S.tts_provider === "edge" ? S.edge_voice : S.tts_provider;
 }
 
@@ -338,12 +343,27 @@ async function refreshChips(secrets) {
   secrets = secrets || (await api.init()).secrets;
   $("#chip-wake").className = "chip " + (S.wake_word_enabled ? "on" : "off");
   const ai = $("#chip-ai");
-  const names = { gemini: "Gemini", anthropic: "Claude", openai: "ChatGPT", openrouter: "OpenRouter", groq: "Groq",
+  const names = { gemini: "Gemini", anthropic: "Claude", openai: "ChatGPT", openrouter: "OpenRouter", bazaarlink: "BazaarLink", orcarouter: "OrcaRouter", groq: "Groq",
     mistral: "Mistral", deepseek: "DeepSeek", xai: "Grok", ollama: "Ollama", custom: "Custom" };
   const needsKey = !["off", "ollama", "custom"].includes(S.llm_provider);
   if (S.llm_provider === "off") { ai.className = "chip off"; ai.textContent = "AI off"; }
   else if (needsKey && !secrets[S.llm_provider + "_api_key"]) { ai.className = "chip mid"; ai.textContent = `AI: ${names[S.llm_provider] || S.llm_provider}, no key`; }
   else { ai.className = "chip on"; ai.textContent = "AI: " + (names[S.llm_provider] || S.llm_provider); }
+  try {
+    const st = await api.ai_status();
+    const label = (n) => names[n] || n;
+    if (st.active && st.active !== S.llm_provider && S.llm_provider !== "off") {
+      ai.className = "chip mid"; ai.textContent = "AI: " + label(st.active) + " (backup)";
+    }
+    const chain = $("#ai-chain");
+    if (chain) {
+      const until = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const parts = st.chain.map((n) => label(n) + (st.resting[n] ? " (resting until " + until(st.resting[n]) + ")" : ""));
+      const missing = st.missing_keys.map(label);
+      chain.textContent = (parts.length ? "Order: " + parts.join(" \u2192 ") + "." : "") +
+        (missing.length ? " Needs a key before it can be used: " + missing.join(", ") + "." : "");
+    }
+  } catch (e) { /* no backups info */ }
   $$("[data-secret]").forEach((i) => { if (secrets[i.dataset.secret]) i.placeholder = "saved securely (paste to replace)"; });
 }
 

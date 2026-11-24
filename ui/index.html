@@ -193,6 +193,8 @@
           <option value="anthropic">Anthropic Claude (paid API)</option>
           <option value="openai">OpenAI ChatGPT (paid API)</option>
           <option value="openrouter">OpenRouter: hundreds of models, some free</option>
+          <option value="bazaarlink">BazaarLink: free models available</option>
+          <option value="orcarouter">OrcaRouter: free models available</option>
           <option value="groq">Groq (free tier available)</option>
           <option value="mistral">Mistral (free tier available)</option>
           <option value="deepseek">DeepSeek (paid API, low cost)</option>
@@ -224,6 +226,18 @@
         <label>Model <input data-set="openrouter_model" placeholder="e.g. openrouter/auto, or a model ID ending in :free"></label>
         <p class="muted">openrouter.ai: one key for Claude, GPT, Gemini, Llama and more. Models ending in :free cost nothing.</p>
       </div>
+      <div class="group" data-show="llm_provider=bazaarlink">
+        <label>BazaarLink API key <span class="secret-row"><input type="password" data-secret="bazaarlink_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="bazaarlink_api_key">Save</button></span></label>
+        <label>Model <input data-set="bazaarlink_model" list="bazaarlink-models" placeholder="auto:free"></label>
+        <datalist id="bazaarlink-models"><option value="auto:free"><option value="auto"></datalist>
+        <p class="muted">bazaarlink.ai: auto:free picks one of its free models. The free plan allows about 10 requests a minute and a small daily allowance (resets at midnight UTC).</p>
+      </div>
+      <div class="group" data-show="llm_provider=orcarouter">
+        <label>OrcaRouter API key <span class="secret-row"><input type="password" data-secret="orcarouter_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="orcarouter_api_key">Save</button></span></label>
+        <label>Model <input data-set="orcarouter_model" list="orcarouter-models" placeholder="orcarouter/free"></label>
+        <datalist id="orcarouter-models"><option value="orcarouter/free"><option value="orcarouter/auto"></datalist>
+        <p class="muted">orcarouter.ai: orcarouter/free picks one of its free models. Same model names as OpenRouter.</p>
+      </div>
       <div class="group" data-show="llm_provider=groq">
         <label>Groq API key <span class="secret-row"><input type="password" data-secret="groq_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="groq_api_key">Save</button></span></label>
         <label>Model <input data-set="groq_model"></label>
@@ -251,6 +265,15 @@
         <label>Model <input data-set="custom_model"></label>
         <label>API key (if it needs one) <span class="secret-row"><input type="password" data-secret="custom_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="custom_api_key">Save</button></span></label>
       </div>
+
+      <h4>Backups</h4>
+      <p class="muted">When a model reaches its limit (or runs out of credit, or its key stops working), Jarvis carries on with the next one here, then goes back once the first resets. They all get the same conversation and memories, because those are kept by Jarvis, not by the AI service. Each backup's key box appears above once you pick it.</p>
+      <div class="backups">
+        <label>Backup 1 <select data-set="llm_backup_1"><option value="">None</option><option value="gemini">Google Gemini</option><option value="openrouter">OpenRouter</option><option value="bazaarlink">BazaarLink</option><option value="orcarouter">OrcaRouter</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="anthropic">Anthropic Claude</option><option value="openai">OpenAI ChatGPT</option><option value="deepseek">DeepSeek</option><option value="xai">xAI Grok</option><option value="ollama">Ollama (on this PC)</option><option value="custom">Other OpenAI-compatible</option></select></label>
+        <label>Backup 2 <select data-set="llm_backup_2"><option value="">None</option><option value="gemini">Google Gemini</option><option value="openrouter">OpenRouter</option><option value="bazaarlink">BazaarLink</option><option value="orcarouter">OrcaRouter</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="anthropic">Anthropic Claude</option><option value="openai">OpenAI ChatGPT</option><option value="deepseek">DeepSeek</option><option value="xai">xAI Grok</option><option value="ollama">Ollama (on this PC)</option><option value="custom">Other OpenAI-compatible</option></select></label>
+        <label>Backup 3 <select data-set="llm_backup_3"><option value="">None</option><option value="gemini">Google Gemini</option><option value="openrouter">OpenRouter</option><option value="bazaarlink">BazaarLink</option><option value="orcarouter">OrcaRouter</option><option value="groq">Groq</option><option value="mistral">Mistral</option><option value="anthropic">Anthropic Claude</option><option value="openai">OpenAI ChatGPT</option><option value="deepseek">DeepSeek</option><option value="xai">xAI Grok</option><option value="ollama">Ollama (on this PC)</option><option value="custom">Other OpenAI-compatible</option></select></label>
+      </div>
+      <div class="muted" id="ai-chain"></div>
 
       <label class="check"><input type="checkbox" data-set="stream_replies"> Start speaking while the AI is still writing (faster replies)</label>
       <label>Model for "what's on my screen" <input data-set="vision_model" placeholder="empty = same as above (OpenRouter picks a free one that can see)"></label>

@@ -592,6 +592,10 @@ Things the user asked you to remember:
 {memories}"""
 
 
+def PROVIDERS_LABEL(name):
+    return providers.PROVIDERS.get(name, {}).get("label", name)
+
+
 class Brain:
     def __init__(self, store, emit, speak, listener_ref):
         self.store, self.emit, self.speak = store, emit, speak
@@ -1313,6 +1317,7 @@ class Brain:
         return False
 
     def _run_tool(self, name, args, sources):
+        self._tool_runs = getattr(self, "_tool_runs", 0) + 1  # a request that already acted isn't re-run on a backup
         t = TOOLS.get(name)
         if self._private_cloud() and name in PERSONAL_TOOLS:
             return {"error": "Private mode: personal data is not shared with cloud AI."}
@@ -1421,8 +1426,37 @@ class Brain:
                 "If they don't answer the question, say so.")
 
     def _llm(self, text, direct=None):
-        """direct: a specialist's name when you're chatting with it directly (Jarvis isn't asked, saving a request)."""
-        p = providers.current()
+        """direct: a specialist's name when you're chatting with it directly (Jarvis isn't asked, saving a request).
+        When a provider hits its limit (or runs out of credit, or rejects its key), the request goes to the next
+        backup in Settings. Every provider gets the same chat history, which lives in Jarvis's own database."""
+        names = ai.order()
+        for i, n in enumerate(names):
+            with providers.use(n) as p:
+                self._tool_runs = 0
+                try:
+                    reply, sources = self._llm_once(text, direct)
+                    if i:
+                        self.store.log("ai", f"Answered by the backup, {p['label']}")
+                    return reply, sources
+                except Exception as e:
+                    why = ai.failure_kind(e)
+                    log.warning("LLM error (%s, %s): %s", n, why, str(e)[:300])
+                    if why:
+                        ai.rest(n, why)
+                    nxt = PROVIDERS_LABEL(names[i + 1]) if i + 1 < len(names) else None
+                    if why is None or nxt is None or self._tool_runs:
+                        msg = self._explain_failure(e, p)
+                        if why and nxt and self._tool_runs:
+                            msg += f" I've switched to {nxt} for your next requests, so ask me again."
+                        return msg, []
+                    reason = {"daily": "reached its daily limit", "limit": "is busy (too many requests)",
+                              "credit": "is out of credit", "key": "rejected its key", "model": "doesn't know the model",
+                              "network": "couldn't be reached"}[why]
+                    self.store.log("ai", f"{p['label']} {reason}; switching to {nxt}")
+                    self.emit("activity", {"text": f"{p['label']} {reason}. Switching to {nxt}", "agent": "jarvis"})
+        return "No AI model is set up. Add one in Settings.", []
+
+    def _llm_once(self, text, direct):
         sources = []
         self._final = []  # specialists' answers, which go to the user as they are
         prev = self.acting
@@ -1434,22 +1468,6 @@ class Brain:
                 reply = " ".join(self._final) if self._final else out.get("error", "Done.")
             else:
                 reply = self._provider_loop()(text, sources)
-        except Exception as e:
-            msg = str(e)
-            log.warning("LLM error: %s", msg)
-            if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "rate limit" in msg.lower():
-                if "per-day" in msg.lower() or "daily" in msg.lower() or "free-models-per-day" in msg.lower():
-                    ai.mark_exhausted()
-                return "I've reached the AI usage limit for now. Basic desktop commands still work.", []
-            if "402" in msg or "credit" in msg.lower() or "insufficient" in msg.lower() or "quota" in msg.lower():
-                return f"Your {p['label']} account is out of credit. Basic desktop commands still work.", []
-            if "API key" in msg or "401" in msg or "403" in msg or "PERMISSION_DENIED" in msg or "authentication" in msg.lower():
-                return f"The {p['label']} key was rejected. Check it in Settings.", []
-            if "404" in msg and "model" in msg.lower():
-                return f"{p['label']} doesn't know the model '{providers.model(p)}'. Check the model name in Settings.", []
-            if isinstance(e, (httpx.ConnectError, httpx.TimeoutException)) or "getaddrinfo" in msg:
-                return "I can't reach the AI service. Check your internet connection.", []
-            return f"The AI request failed: {msg[:150]}", []
         finally:
             self.acting = prev
         seen, uniq = set(), []
@@ -1458,6 +1476,22 @@ class Brain:
                 seen.add(s["url"])
                 uniq.append(s)
         return reply.strip() or "Done.", uniq[:4]
+
+    @staticmethod
+    def _explain_failure(e, p):
+        msg = str(e)
+        why = ai.failure_kind(e)
+        if why in ("daily", "limit"):
+            return "I've reached the AI usage limit for now. Basic desktop commands still work."
+        if why == "credit":
+            return f"Your {p['label']} account is out of credit. Basic desktop commands still work."
+        if why == "key":
+            return f"The {p['label']} key was rejected. Check it in Settings."
+        if why == "model":
+            return f"{p['label']} doesn't know the model '{providers.model(p)}'. Check the model name in Settings."
+        if why == "network":
+            return "I can't reach the AI service. Check your internet connection."
+        return f"The AI request failed: {msg[:150]}"
 
     def _emit_text(self, delta):
         if self._live and delta:
@@ -1731,7 +1765,7 @@ class Brain:
                 answer = r.json()["message"].get("content", "")
             else:
                 model = override or providers.model(p)
-                choices = self._openrouter_vision_models(model) if settings.get("llm_provider") == "openrouter" and not override else [model]
+                choices = self._openrouter_vision_models(model) if providers.name() == "openrouter" and not override else [model]
                 answer, err = None, ""
                 for m in choices:
                     r = httpx.post(providers.base_url(p) + "/chat/completions", headers=self._openai_headers(p), timeout=120, json={

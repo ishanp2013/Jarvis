@@ -39,7 +39,7 @@ Jarvis runs in the background, starts with Windows and is reachable from your ph
 | Area | What Jarvis does |
 |---|---|
 | **Voice** | "Hey Jarvis" wake word (or Alexa, Hey Mycroft, Hey Rhasspy, or your own). Speech recognition on your PC. Natural British voice. Keep talking without repeating the wake word. Interrupt it any time. Starts speaking while the AI is still writing. |
-| **AI** | Your choice of Claude, ChatGPT, Gemini, OpenRouter (free models), Groq, Mistral, DeepSeek, Grok, or fully offline with Ollama / LM Studio. Shares a daily AI budget so free plans last. |
+| **AI** | Your choice of Claude, ChatGPT, Gemini, OpenRouter, BazaarLink and OrcaRouter (free models), Groq, Mistral, DeepSeek, Grok, or fully offline with Ollama / LM Studio. Shares a daily AI budget so free plans last, and switches to backup models when one runs out. |
 | **Windows** | Open, close, switch and arrange apps. Find files ("the presentation I was working on yesterday"). Press buttons in apps. Media keys, lock, restart and shut down with confirmation. Routines. Screen understanding ("explain this error"). Clipboard ("translate what I copied"). |
 | **Music, video, games** | Spotify desktop app (works with a free account): a song, Liked Songs, any song. YouTube and YouTube Music. Steam and Epic games. |
 | **Accounts** | Gmail, Google Calendar, Tasks, Drive, Classroom, Outlook, Microsoft To Do, GitHub, Discord, Slack, Telegram, WhatsApp, Notion, Home Assistant, weather, web research with sources. |
@@ -103,11 +103,15 @@ Go to **Settings → AI model**, pick a provider, paste its key, press **Save**.
 |---|---|---|
 | **OpenRouter** (recommended free start) | Free models available (about 50 requests/day) | <https://openrouter.ai/keys>. Set the model to `openrouter/free`. |
 | Google Gemini | Free tier (18+ only; not free in UK/EEA) | <https://aistudio.google.com/apikey> |
+| BazaarLink | Free models (small daily allowance) | <https://bazaarlink.ai>. Model `auto:free`. |
+| OrcaRouter | Free models available | <https://www.orcarouter.ai>. Model `orcarouter/free`. |
 | Groq, Mistral | Free tiers | console.groq.com, console.mistral.ai |
 | Anthropic Claude | Paid per use | <https://console.anthropic.com> |
 | OpenAI ChatGPT | Paid per use | <https://platform.openai.com> |
 | DeepSeek, xAI Grok | Paid per use | their developer consoles |
 | Ollama / LM Studio | Free, offline, on your PC | <https://ollama.com>, then `ollama pull qwen2.5:3b` |
+
+**Backups:** under **Settings → AI model → Backups**, pick up to three more providers in order and save each one's key (its key box appears when you pick it). When a model hits its limit, runs out of credit or its key stops working, Jarvis carries on with the next one and goes back once the first resets (free plans: midnight UTC). Every model gets the same conversation and memories, because Jarvis keeps those himself. If a request had already done something (sent a message, moved a file) when the limit hit, it isn't repeated: Jarvis switches and asks you to say it again.
 
 > **API keys are separate from subscriptions.** ChatGPT Plus, Claude Pro or Google AI Pro don't include API use. Never use someone else's account or key.
 

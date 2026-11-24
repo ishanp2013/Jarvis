@@ -11,7 +11,7 @@ HOME = Path(os.environ.get("LOCALAPPDATA", Path.home())) / APP_NAME
 HOME.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = HOME / "settings.json"
 
-SECRET_KEYS = ("gemini_api_key", "anthropic_api_key", "openai_api_key", "openrouter_api_key", "groq_api_key",
+SECRET_KEYS = ("gemini_api_key", "anthropic_api_key", "openai_api_key", "openrouter_api_key", "bazaarlink_api_key", "orcarouter_api_key", "groq_api_key",
                "mistral_api_key", "deepseek_api_key", "xai_api_key", "custom_api_key",
                "elevenlabs_api_key", "discord_bot_token", "google_client_secret", "github_token",
                "notion_token", "slack_bot_token", "telegram_bot_token", "home_token")
@@ -50,6 +50,11 @@ DEFAULTS = {
     "anthropic_effort": "low",       # low = quickest replies; medium/high think harder
     "openai_model": "gpt-5-mini",
     "openrouter_model": "openrouter/auto",
+    "bazaarlink_model": "auto:free",
+    "orcarouter_model": "orcarouter/free",
+    "llm_backup_1": "",              # backups, in order: used when the one before hits its limit
+    "llm_backup_2": "",
+    "llm_backup_3": "",
     "groq_model": "llama-3.3-70b-versatile",
     "mistral_model": "mistral-small-latest",
     "deepseek_model": "deepseek-chat",

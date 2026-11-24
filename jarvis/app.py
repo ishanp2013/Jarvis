@@ -709,6 +709,13 @@ class Api:
         self._j.store.log("settings", "Updated: " + ", ".join(sorted(values)))
         return settings.public()
 
+    def ai_status(self):
+        """The AI models in order (main, then backups), which are resting after a limit, and which still need a key."""
+        u = ai.usage()
+        picked = [settings.get("llm_provider")] + [settings.get(k) for k in providers.BACKUP_SETTINGS]
+        return {"chain": providers.chain(), "active": u["active"], "resting": u["resting"],
+                "missing_keys": [n for n in dict.fromkeys(picked) if n in providers.PROVIDERS and not providers.ready(n)]}
+
     def set_secret(self, name, value):
         config.set_secret(name, value.strip())
         self._j.store.log("settings", f"{'Saved' if value else 'Removed'} {name}")

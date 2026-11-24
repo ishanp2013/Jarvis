@@ -7,6 +7,7 @@ import datetime as dt
 import json
 import re
 import threading
+import time
 
 import httpx
 
@@ -31,7 +32,22 @@ def _read():
         data = json.loads(USAGE_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
-    return data if data.get("day") == _day() else {"day": _day(), "chat": 0, "agent": 0, "exhausted": False, "agents": {}}
+    if data.get("day") != _day():
+        data = {"day": _day(), "chat": 0, "agent": 0, "exhausted": False, "agents": {}}
+    data.setdefault("down", {})       # provider -> unix time it may be tried again
+    data.setdefault("providers", {})  # provider -> requests today
+    return data
+
+
+def _write(d):
+    USAGE_FILE.write_text(json.dumps(d), encoding="utf-8")
+
+
+def _all_down(d):
+    """True when every provider in the chain is resting (no backup left)."""
+    chain = providers.chain()
+    now = time.time()
+    return bool(chain) and all(d["down"].get(n, 0) > now for n in chain)
 
 
 def usage():
@@ -39,8 +55,10 @@ def usage():
         d = _read()
     limit = int(settings.get("ai_daily_limit") or 50)
     return {"chat": d["chat"], "agent": d["agent"], "total": d["chat"] + d["agent"], "limit": limit,
-            "agent_budget": int(settings.get("agent_daily_budget") or 25), "exhausted": d["exhausted"],
-            "by_agent": dict(d.get("agents") or {})}
+            "agent_budget": int(settings.get("agent_daily_budget") or 25),
+            "exhausted": _all_down(d) if providers.chain() else d["exhausted"],
+            "by_agent": dict(d.get("agents") or {}), "by_provider": dict(d["providers"]),
+            "resting": {n: int(t) for n, t in d["down"].items() if t > time.time()}, "active": active()}
 
 
 def count(kind="chat", agent=None):
@@ -53,14 +71,67 @@ def count(kind="chat", agent=None):
         who = agent or ("jarvis" if kind == "chat" else "scholar")
         agents = d.setdefault("agents", {})  # usage files from before the team have no per-agent counts yet
         agents[who] = agents.get(who, 0) + 1
-        USAGE_FILE.write_text(json.dumps(d), encoding="utf-8")
+        pn = providers.name()
+        d["providers"][pn] = d["providers"].get(pn, 0) + 1
+        _write(d)
 
 
-def mark_exhausted():
+def _midnight_utc():
+    now = dt.datetime.now(dt.timezone.utc)
+    return (now + dt.timedelta(days=1)).replace(hour=0, minute=0, second=5, microsecond=0).timestamp()
+
+
+def mark_exhausted(provider_name=None, seconds=None):
+    """A provider hit its limit: rest it until midnight UTC (when free plans reset), or for `seconds`."""
     with _lock:
         d = _read()
-        d["exhausted"] = True
-        USAGE_FILE.write_text(json.dumps(d), encoding="utf-8")
+        d["down"][provider_name or providers.name()] = time.time() + seconds if seconds else _midnight_utc()
+        d["exhausted"] = _all_down(d)
+        _write(d)
+
+
+def is_down(provider_name):
+    with _lock:
+        return _read()["down"].get(provider_name, 0) > time.time()
+
+
+def order():
+    """Providers to try for the next request: the chain minus the resting ones (the main one if all rest)."""
+    chain = providers.chain()
+    up = [n for n in chain if not is_down(n)]
+    return up or chain[:1] or [settings.get("llm_provider")]
+
+
+def active():
+    """The provider the next request goes to."""
+    return order()[0]
+
+
+def failure_kind(err):
+    """Why a request failed, as far as switching to a backup goes: "daily" (limit for today), "limit" (too many
+    requests just now), "credit", "key", "model", "network", or None (anything else: no switching)."""
+    msg = str(err)
+    low = msg.lower()
+    if "429" in msg or "resource_exhausted" in low or "rate limit" in low or "rate-limit" in low or "too many requests" in low:
+        return "daily" if ("per-day" in low or "daily" in low or "per day" in low or "free-models-per-day" in low) else "limit"
+    if "402" in msg or "credit" in low or "insufficient" in low or "quota" in low:
+        return "credit"
+    if "api key" in low or "401" in msg or "403" in msg or "permission_denied" in low or "authentication" in low             or "unauthorized" in low:
+        return "key"
+    if "404" in msg and "model" in low:
+        return "model"
+    if isinstance(err, (httpx.ConnectError, httpx.TimeoutException)) or "getaddrinfo" in low or "couldn't reach" in low:
+        return "network"
+    return None
+
+
+# How long a provider rests after each kind of failure (None = until midnight UTC).
+REST = {"daily": None, "limit": 90, "credit": 6 * 3600, "key": 1800, "model": 1800, "network": 60}
+
+
+def rest(provider_name, kind):
+    if kind in REST:
+        mark_exhausted(provider_name, REST[kind])
 
 
 def agent_may_use(n=1):
@@ -79,11 +150,29 @@ def complete(system, prompt, kind="agent", max_tokens=6000, agent=None):
     """Send one request to the chosen AI model and return its text. Raises OutOfBudget when the agent's
     share is used up, or RuntimeError with a readable message on any other failure. `agent` is the team
     member asking (scholar, forge...), for the per-agent count."""
-    p = providers.current()
-    if not p or not providers.available():
+    if not providers.chain():
         raise RuntimeError("No AI model is set up. Add one in Settings.")
     if kind == "agent" and not agent_may_use():
         raise OutOfBudget("The agent's share of today's free AI requests is used up; it continues after midnight UTC.")
+    names = order()
+    for i, n in enumerate(names):
+        with providers.use(n):
+            try:
+                return _complete_one(system, prompt, kind, max_tokens, agent)
+            except Exception as e:
+                why = failure_kind(e)
+                if why is None:
+                    raise
+                rest(n, why)
+                if i == len(names) - 1:
+                    if why in ("daily", "limit"):
+                        raise OutOfBudget("Every AI model you've set up has reached its limit; the agent waits until "
+                                          "one resets.") from e
+                    raise
+
+
+def _complete_one(system, prompt, kind, max_tokens, agent):
+    p = providers.current()
     count(kind, agent)
     try:
         if p["kind"] == "anthropic":
@@ -118,8 +207,7 @@ def complete(system, prompt, kind="agent", max_tokens=6000, agent=None):
             "model": providers.model(p), "temperature": 0.3, "max_tokens": max_tokens,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]})
         if r.status_code == 429:
-            mark_exhausted()
-            raise OutOfBudget("The AI service's free daily limit has been reached; the agent waits until it resets.")
+            raise RuntimeError(f"{p['label']}'s limit has been reached (429): {r.text[:200]}")
         if r.status_code >= 400:
             raise RuntimeError(f"AI request failed ({r.status_code}): {r.text[:200]}")
         return r.json()["choices"][0]["message"].get("content") or ""

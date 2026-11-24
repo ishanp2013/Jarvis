@@ -334,6 +334,100 @@ class SafetyTests(unittest.TestCase):
             self.assertEqual(win.close_target("explorer"), [])
 
 
+class BackupTests(unittest.TestCase):
+    """When a model hits its limit, Jarvis carries on with the next backup, with the same conversation."""
+
+    def setUp(self):
+        from jarvis import providers
+        self.providers = providers
+        ai.USAGE_FILE.unlink(missing_ok=True)
+        self.addCleanup(lambda: ai.USAGE_FILE.unlink(missing_ok=True))
+        self.values = {"llm_provider": "openrouter", "llm_backup_1": "bazaarlink", "llm_backup_2": "orcarouter",
+                       "llm_backup_3": "groq", "private_mode": False, "team_mode": False}
+        self.keys = {"openrouter_api_key", "bazaarlink_api_key", "orcarouter_api_key"}  # groq has no key
+        for p in (mock.patch.object(settings, "get", lambda k, d=None: self.values.get(k, settings._data.get(k, d))),
+                  mock.patch.object(providers, "get_secret", lambda n: "k" if n in self.keys else "")):
+            p.start()
+            self.addCleanup(p.stop)
+        self.brain, self.events, _ = make_brain()
+        self.brain.store.add_message("user", "my exam is on friday")
+        self.brain.store.add_message("assistant", "Noted.")
+        self.brain.store.add_message("user", "when is my exam?")
+        self.calls = []
+        self.fail = {"openrouter": RuntimeError("429: Rate limit exceeded: free-models-per-day")}
+
+        def loop(text, sources):
+            n = providers.name()
+            self.calls.append((n, text, [m["text"] for m in self.brain._history()]))
+            if n in self.fail:
+                raise self.fail[n]
+            return f"Friday (from {n})"
+        p = mock.patch.object(self.brain, "_provider_loop", lambda: loop)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_chain_order_skips_missing_keys(self):
+        self.assertEqual(self.providers.chain(), ["openrouter", "bazaarlink", "orcarouter"])
+        self.values["llm_backup_2"] = "openrouter"  # listed twice: used once
+        self.assertEqual(self.providers.chain(), ["openrouter", "bazaarlink"])
+
+    def test_switches_with_the_same_conversation(self):
+        reply, _ = self.brain._llm("when is my exam?")
+        self.assertEqual(reply, "Friday (from bazaarlink)")
+        self.assertEqual([c[0] for c in self.calls], ["openrouter", "bazaarlink"])
+        self.assertEqual(self.calls[0][1:], self.calls[1][1:])  # same request, same history
+        self.assertIn("my exam is on friday", self.calls[1][2])
+        self.assertTrue(ai.is_down("openrouter"))
+        self.assertEqual(ai.active(), "bazaarlink")
+        self.calls.clear()
+        self.brain._llm("thanks")  # the resting one isn't tried again today
+        self.assertEqual([c[0] for c in self.calls], ["bazaarlink"])
+        self.assertTrue(any("Switching to BazaarLink" in str(e[1]) for e in self.events if e[0] == "activity"))
+
+    def test_all_resting_says_limit(self):
+        self.fail.update({n: RuntimeError("429 too many requests") for n in ("bazaarlink", "orcarouter")})
+        reply, _ = self.brain._llm("hi")
+        self.assertIn("usage limit", reply)
+        self.assertEqual([c[0] for c in self.calls], ["openrouter", "bazaarlink", "orcarouter"])
+        self.assertTrue(ai.usage()["exhausted"])
+
+    def test_no_switch_for_other_errors_or_after_a_tool_ran(self):
+        self.fail["openrouter"] = RuntimeError("something odd")
+        reply, _ = self.brain._llm("hi")
+        self.assertIn("failed", reply)
+        self.assertEqual([c[0] for c in self.calls], ["openrouter"])
+        # a tool already ran (it may have sent or changed something): no repeat on a backup
+        self.calls.clear()
+
+        def acted(text, sources):
+            self.brain._tool_runs = 1
+            raise RuntimeError("402 insufficient credits")
+        with mock.patch.object(self.brain, "_provider_loop", lambda: acted):
+            reply, _ = self.brain._llm("send it")
+        self.assertIn("switched to BazaarLink", reply)
+        self.assertTrue(ai.is_down("openrouter"))
+
+    def test_background_requests_use_backups(self):
+        def one(system, prompt, kind, max_tokens, agent):
+            if self.providers.name() == "openrouter":
+                raise RuntimeError("OpenRouter's limit has been reached (429): per-day")
+            return "summary by " + self.providers.name()
+        with mock.patch.object(ai, "_complete_one", one):
+            self.assertEqual(ai.complete("s", "p", kind="chat"), "summary by bazaarlink")
+            self.values["llm_backup_1"] = self.values["llm_backup_2"] = ""
+            ai.USAGE_FILE.unlink(missing_ok=True)
+            with self.assertRaises(ai.OutOfBudget):
+                ai.complete("s", "p", kind="chat")
+
+    def test_failure_kinds(self):
+        import httpx
+        cases = {"429: free-models-per-day": "daily", "Error 429 Too Many Requests": "limit", "402 Payment Required": "credit",
+                 "401 invalid API key": "key", "404 model not found": "model", "boom": None}
+        for msg, kind in cases.items():
+            self.assertEqual(ai.failure_kind(RuntimeError(msg)), kind, msg)
+        self.assertEqual(ai.failure_kind(httpx.ConnectError("x")), "network")
+
+
 class ProviderTests(unittest.TestCase):
     """Each AI provider's request format, against a fake server: a tool call, then a final answer."""
 
