@@ -158,6 +158,35 @@ def synth_elevenlabs(text):
     return _decode_mp3(r.content)
 
 
+_FISH_ID = re.compile(r"\b([0-9a-f]{32})\b", re.I)
+
+
+def fish_voice_id(value):
+    """The voice ID from a fish.audio link (fish.audio/m/<id>, ...?modelId=<id>) or the ID itself."""
+    value = (value or "").strip()
+    m = _FISH_ID.search(value)
+    return m.group(1).lower() if m else value
+
+
+def synth_fish(text):
+    """Fish Audio (fish.audio). The free developer tier uses the s2.1-pro-free model."""
+    key = get_secret("fish_api_key")
+    if not key:
+        raise RuntimeError("Fish Audio key not set")
+    body = {"text": text, "format": "mp3", "mp3_bitrate": 64, "latency": "normal", "normalize": True}
+    if voice := fish_voice_id(settings.get("fish_voice_id")):
+        body["reference_id"] = voice
+    speed = float(settings.get("fish_speed") or 1.0)
+    if abs(speed - 1.0) > 0.01:
+        body["prosody"] = {"speed": speed}
+    r = httpx.post("https://api.fish.audio/v1/tts", json=body, timeout=30,
+                   headers={"Authorization": f"Bearer {key}", "model": settings.get("fish_model") or "s2.1-pro-free"})
+    if r.status_code != 200:
+        why = {401: "the key was rejected", 402: "the free credits are used up"}.get(r.status_code, r.text[:150])
+        raise RuntimeError(f"Fish Audio {r.status_code}: {why}")
+    return _decode_mp3(r.content)
+
+
 def synth_windows(text):
     import pythoncom
     import win32com.client
@@ -181,7 +210,7 @@ def synth_windows(text):
     return _trim(np.frombuffer(d.samples, dtype=np.int16), 24000), 24000
 
 
-PROVIDERS = {"elevenlabs": synth_elevenlabs, "edge": synth_edge, "windows": synth_windows}
+PROVIDERS = {"elevenlabs": synth_elevenlabs, "fish": synth_fish, "edge": synth_edge, "windows": synth_windows}
 
 
 def elevenlabs_voices():

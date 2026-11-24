@@ -370,6 +370,40 @@ class SafetyTests(unittest.TestCase):
             self.assertEqual(win.close_target("explorer"), [])
 
 
+class FishVoiceTests(unittest.TestCase):
+    """Fish Audio's text-to-speech request, against a fake server."""
+
+    def test_request_and_errors(self):
+        sent = []
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            sent.append((url, json, headers))
+            return mock.Mock(status_code=200, content=b"mp3")
+        values = {"fish_voice_id": "https://fish.audio/m/0123456789abcdef0123456789ABCDEF/", "fish_model": "s2.1-pro-free",
+                  "fish_speed": 1.1}
+        with mock.patch.object(speech, "get_secret", lambda n: "fish-key" if n == "fish_api_key" else ""), \
+                mock.patch.object(settings, "get", lambda k, d=None: values.get(k, settings._data.get(k, d))), \
+                mock.patch.object(speech.httpx, "post", fake_post), \
+                mock.patch.object(speech, "_decode_mp3", lambda b: ("audio", 24000)):
+            self.assertEqual(speech.synth_fish("Good evening."), ("audio", 24000))
+            url, body, headers = sent[0]
+            self.assertEqual(url, "https://api.fish.audio/v1/tts")
+            self.assertEqual((headers["Authorization"], headers["model"]), ("Bearer fish-key", "s2.1-pro-free"))
+            self.assertEqual((body["text"], body["reference_id"], body["format"]),
+                             ("Good evening.", "0123456789abcdef0123456789abcdef", "mp3"))
+            self.assertEqual(body["prosody"], {"speed": 1.1})
+            values["fish_voice_id"] = ""  # no voice chosen: Fish's default
+            speech.synth_fish("hi")
+            self.assertNotIn("reference_id", sent[-1][1])
+            with mock.patch.object(speech.httpx, "post", lambda *a, **k: mock.Mock(status_code=402, text="")):
+                with self.assertRaisesRegex(RuntimeError, "free credits are used up"):
+                    speech.synth_fish("hi")
+        with mock.patch.object(speech, "get_secret", lambda n: ""):
+            with self.assertRaisesRegex(RuntimeError, "key not set"):
+                speech.synth_fish("hi")
+        self.assertIn("fish", speech.PROVIDERS)
+
+
 class BackupTests(unittest.TestCase):
     """When a model hits its limit, Jarvis carries on with the next backup, with the same conversation."""
 

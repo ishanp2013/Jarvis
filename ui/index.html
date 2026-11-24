@@ -166,7 +166,7 @@
 
       <h3>Voice</h3>
       <label>Voice engine
-        <select data-set="tts_provider"><option value="edge">Microsoft neural (free, online)</option><option value="elevenlabs">ElevenLabs (API key)</option><option value="windows">Windows offline voice</option></select></label>
+        <select data-set="tts_provider"><option value="edge">Microsoft neural (free, online)</option><option value="elevenlabs">ElevenLabs (API key)</option><option value="fish">Fish Audio (API key, free tier)</option><option value="windows">Windows offline voice</option></select></label>
       <div class="group" data-show="tts_provider=edge">
         <label>Voice <select data-set="edge_voice" id="edge-voices"></select></label>
         <label>Speed <select data-set="edge_rate"><option>-15%</option><option>-10%</option><option>-5%</option><option>+0%</option><option>+10%</option></select></label>
@@ -182,6 +182,14 @@
         <label>Stability <input type="range" min="0" max="1" step="0.05" data-set="elevenlabs_stability"></label>
         <label>Similarity <input type="range" min="0" max="1" step="0.05" data-set="elevenlabs_similarity"></label>
         <label>Style <input type="range" min="0" max="1" step="0.05" data-set="elevenlabs_style"></label>
+      </div>
+      <div class="group" data-show="tts_provider=fish">
+        <label>Fish Audio API key <span class="secret-row"><input type="password" data-secret="fish_api_key" placeholder="paste key, then Save"><button class="small" data-save-secret="fish_api_key">Save</button></span></label>
+        <label>Voice <input type="text" data-set="fish_voice_id" placeholder="paste a voice's link from fish.audio, or its ID" spellcheck="false"></label>
+        <p class="muted">Find a voice at fish.audio (Discover), open it and copy the page link. Empty = Fish Audio's default voice.</p>
+        <label>Model <select data-set="fish_model"><option value="s2.1-pro-free">S2.1 Pro Free: free developer tier</option><option value="s2.1-pro">S2.1 Pro (uses paid credits)</option><option value="s1">S1 (uses paid credits)</option></select></label>
+        <label>Speed <input type="range" min="0.7" max="1.4" step="0.05" data-set="fish_speed"></label>
+        <p class="muted">If Fish Audio fails (no key, free credits used up, no internet), Jarvis falls back to the Microsoft voice.</p>
       </div>
       <label>Volume <input type="range" min="0.2" max="1.5" step="0.05" data-set="tts_volume"></label>
       <button class="small" id="test-voice">Test voice</button>

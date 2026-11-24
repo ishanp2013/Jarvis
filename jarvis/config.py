@@ -14,7 +14,7 @@ SETTINGS_FILE = HOME / "settings.json"
 
 SECRET_KEYS = ("gemini_api_key", "anthropic_api_key", "openai_api_key", "openrouter_api_key", "bazaarlink_api_key", "orcarouter_api_key", "groq_api_key",
                "mistral_api_key", "deepseek_api_key", "xai_api_key", "custom_api_key",
-               "elevenlabs_api_key", "discord_bot_token", "google_client_secret", "github_token",
+               "elevenlabs_api_key", "fish_api_key", "discord_bot_token", "google_client_secret", "github_token",
                "notion_token", "slack_bot_token", "telegram_bot_token", "home_token")
 
 DEFAULTS = {
@@ -34,7 +34,7 @@ DEFAULTS = {
     "follow_up_seconds": 6,          # keep listening after a reply without the wake word
     "silence_end_ms": 900,
     # voice output
-    "tts_provider": "edge",          # edge | elevenlabs | windows
+    "tts_provider": "edge",          # edge | elevenlabs | fish | windows
     "edge_voice": "en-GB-RyanNeural",
     "edge_rate": "-5%",
     "edge_pitch": "-8Hz",
@@ -43,6 +43,9 @@ DEFAULTS = {
     "elevenlabs_stability": 0.55,
     "elevenlabs_similarity": 0.75,
     "elevenlabs_style": 0.1,
+    "fish_voice_id": "",             # a voice from fish.audio: its link or ID
+    "fish_model": "s2.1-pro-free",   # s2.1-pro-free = Fish Audio's free developer tier
+    "fish_speed": 1.0,
     "tts_volume": 1.0,
     # brain
     "llm_provider": "gemini",        # a key of providers.PROVIDERS, or "off"

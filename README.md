@@ -130,6 +130,12 @@ Go to **Settings → AI model**, pick a provider, paste its key, press **Save**.
   2. Paste the key and press **Save**.
   3. Press **Load my voices and usage** and pick a voice, or paste a voice ID from the ElevenLabs voice library. Library voices may need a paid plan.
   4. Adjust **Stability**, **Similarity** and **Style**.
+- **Fish Audio (optional, free tier):**
+  1. Make an account at fish.audio and create an API key (API → API keys).
+  2. Settings → Voice → **Fish Audio**, paste the key and press **Save**.
+  3. Find a voice on fish.audio, open it and paste its page link into **Voice** (empty = Fish's default voice).
+  4. Keep the model on **S2.1 Pro Free** to stay on the free developer tier.
+- If the chosen voice fails (no key, credits used up, no internet), Jarvis falls back to the Microsoft voice.
 - **Windows offline voice:** works with no internet.
 
 **Wake word** (Settings → Listening):
