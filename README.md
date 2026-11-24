@@ -48,7 +48,6 @@ Jarvis runs in the background, starts with Windows and is reachable from your ph
 | **Prepared work** | Turns tasks into finished PowerPoint decks, Word documents, study notes, revision sheets and spreadsheets, researched from reliable sources and saved in *Documents\School Projects*. |
 | **Briefings** | "Welcome back. You received 8 messages… I've prepared your science presentation…", spoken when you return, plus a Today tab on the laptop and phone. |
 | **Dashboard** | A holographic HUD: a 3D Jarvis core that pulses with your voice and his (a flat 2D core in low-power mode), a boot sequence, live system meters, and a **Team** tab that works like Discord: talk to Jarvis, watch the **#team** channel as agents hand work to each other, or chat directly with one specialist. |
-| **Builder** | "Tell Claude Code to make the UI cooler": after your approval, Claude Code changes Jarvis's own code on a separate copy, the tests run, and you choose to apply or discard it. "Undo Builder's last change" puts it back. Needs Claude Code signed in with your own personal account. |
 | **System control** | Operator makes folders; moves, copies and renames files; and runs Windows commands. Harmless things just happen. Only major actions ask first: deleting (always to the Recycle Bin), commands that change the system, restart/shutdown and risky buttons. Windows' own folders are never touched. |
 | **Jarvis and his team** | Jarvis talks to you and passes work to five specialists: **Scholar** (school, tasks), **Forge** (makes files), **Herald** (messages), **Operator** (laptop and phone), **Scout** (research). Each uses only its own tools, and only Herald can send, enforced in code. Common commands use no AI; a chat question costs 1 request; delegated work costs 2 or more. Scout searches the web before answering. |
 
@@ -302,10 +301,12 @@ If the laptop is asleep or off, the app still opens and shows **"Laptop offline 
 ## The background agent (school)
 
 Every 45 minutes (or when you press **Check school now**), Jarvis:
-1. Collects what's new from **Google Classroom**, **Gmail/Outlook**, **phone notifications** (WhatsApp groups and the like) and selected **Discord** channels.
-2. Sends **only school items** to the AI. Everything else is just counted.
+1. Collects what's new from **Google Classroom**, **Gmail/Outlook**, **WhatsApp on this PC** (each chat's latest message, read from the chat list without opening anything), **phone notifications** and selected **Discord** channels.
+2. Sends school items to the AI, plus **personal messages that could hold a to-do** (newsletters, no-reply and notification emails are skipped). Turn that off with **Also add to-dos from my personal messages** on the Tasks tab; private mode with an online AI keeps personal messages out too.
 3. Works out what each one means: assignment, test, announcement or request, how important it is, the **real due date** ("next Thursday" becomes a date), and exactly what's asked.
-4. Adds assignments and tests to your **task list**, sorted by urgency.
+4. Adds assignments, tests and **anything someone asks you to do** ("can you bring my charger tomorrow?") to your **task list** on the Tasks tab, sorted by urgency, with where it came from.
+
+WhatsApp is read in the background only when its window is already open or you've been away from the keyboard for a minute, so it never pops up while you're working.
 5. Drafts replies to school emails as **approval cards**, with blanks like "[will / won't]" where only you can decide. Nothing is sent without your tap.
 6. **Reminds you** the afternoon before a deadline and the morning of it, on the laptop and your phone.
 

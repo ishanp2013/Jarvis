@@ -640,17 +640,6 @@ async function loadAgent() {
   $("#ag-problems").textContent = (s.problems || []).join(" ");
 }
 
-async function renderBuilder() {
-  const { status: s, changes } = await api.builder_info();
-  $("#builder-status").textContent = !s.installed ? "Claude Code isn't installed on this laptop."
-    : !s.signed_in ? "Claude Code isn't signed in. Run 'claude' in a terminal and sign in with your personal account."
-    : s.personal === false && !s.confirmed ? "⚠ Claude Code is signed in with a company or school account, so Builder won't use it. Sign in with your own account (run 'claude', then /login)."
-    : !s.enabled ? "Ready, but switched off below." : "Ready.";
-  const names = { ready: "waiting for you", applied: "applied", undone: "undone", discarded: "discarded", failed: "failed", running: "working", queued: "queued", done: "no changes" };
-  fill("#builder-changes", changes.map((c) => li(`${c.title}: ${names[c.state] || c.state}${c.stat ? " · " + c.stat : ""}${c.tests_passed === false ? " · tests failed" : ""}`,
-    c.state === "failed" ? "urgent" : c.state === "ready" ? "soon" : "")), "No changes yet.");
-}
-
 async function renderDevices() {
   const list = await api.devices(), ul = $("#devices"); ul.innerHTML = "";
   list.forEach((d) => {
@@ -689,7 +678,7 @@ function wire() {
     if (tab === "activity") loadActivity();
     if (tab === "tasks") loadAgent();
     if (tab === "today") loadToday();
-    if (tab === "settings") { api.routines().then(renderRoutines); renderRemote(); renderBuilder(); }
+    if (tab === "settings") { api.routines().then(renderRoutines); renderRemote(); }
   }));
   $("#btn-mic").onclick = async () => setMic(await api.set_mic(!micOn));
   $("#btn-talk").onclick = async () => { const r = await api.push_to_talk(); if (r !== "ok") toast(r); };

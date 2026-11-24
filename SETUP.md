@@ -372,23 +372,6 @@ A presentation takes about 3–5 minutes on the free AI and about 4 requests.
 - **Quick controls:** find my phone, game mode, check school.
 - **Recent activity.**
 
-## 7p. Builder: Jarvis improves himself with Claude Code
-
-1. Make sure **Claude Code** is signed in with **your own personal account**:
-   - open a terminal and run `claude`;
-   - use `/login` to switch accounts if needed.
-   - Builder refuses to run with a company or school account.
-2. In Jarvis → **Settings → Builder**, tick **Let Builder change Jarvis's code**. The status line shows whether Claude Code is ready.
-3. Say or type: **"tell Claude Code to make the UI cooler"**, or "ask Claude to add a dark-blue theme". Jarvis then:
-   - shows an approval card with the exact request (you can edit it);
-   - after you approve, makes a separate copy of Jarvis on its own Git branch, so the one you're using is untouched;
-   - lets Claude Code work there, reading and editing files only, with no commands and no web;
-   - runs the tests and tells you what changed and whether the tests pass;
-   - shows another card, **Apply this change**. If you apply it, Jarvis restarts with the new code.
-4. **"Undo Builder's last change"** reverses it, and Jarvis restarts again. Nothing is ever deleted from history.
-
-Builder uses your Claude account's own limits, not Jarvis's free AI budget. It won't start if the Jarvis folder has uncommitted changes.
-
 ## 7q. What runs straight away, and what asks first
 
 Jarvis just does what you ask. **Only major actions show a confirmation card** (approve on screen, or say "yes"):
@@ -400,7 +383,6 @@ Jarvis just does what you ask. **Only major actions show a confirmation card** (
 | commands that only look at things (`ipconfig`, listing files, system info) | **restart or shut down** |
 | music, YouTube, games, phone, smart home | **risky buttons** in apps (Send, Delete, Buy) |
 | messages and emails **your own words** asked for | messages the AI decided to send by itself (for example after reading an email) |
-| | **Builder** changes, both starting and applying |
 
 Never allowed: Windows' own folders, Program Files, other users' folders, Jarvis's private data, and getting around a refusal.
 

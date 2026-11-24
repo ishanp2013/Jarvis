@@ -1168,6 +1168,63 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(len(self.sent_to_ai), 1)
         self.assertEqual(len(self.store.tasks()), 1)
 
+    def test_personal_todos_reach_the_task_list(self):
+        self.items = [
+            {"source": "gmail", "ext_id": "p1", "sender": "Sam", "address": "sam@gmail.com", "title": "photos",
+             "text": "Can you send me the trip photos by Friday?"},
+            {"source": "whatsapp", "ext_id": "Mum|9:41 PM|buy milk", "sender": "Mum", "group": "Mum",
+             "title": "WhatsApp: Mum", "text": "Buy milk on the way home"},
+            {"source": "gmail", "ext_id": "p3", "sender": "GitHub", "address": "notifications@github.com", "title": "PR", "text": "x"},
+        ]
+        prepared = []
+        self.agent.on_task = prepared.append
+
+        def fake_triage(batch, today=None):
+            self.sent_to_ai.append([it["ext_id"] for it in batch])
+            self.assertEqual([it["school"] for it in batch], [False, False])
+            return {i: {"category": "request", "importance": 3, "summary": "", "deadline": None, "needs_reply": True,
+                        "reply": "ok", "task": {"title": t, "type": "other", "requirements": "", "due": None}}
+                    for i, t in enumerate(["Send Sam the trip photos", "Buy milk"])}
+        with mock.patch.object(self.triage, "triage", fake_triage):
+            summary = self.agent.run()
+        self.assertEqual(self.sent_to_ai, [["p1", "Mum|9:41 PM|buy milk"]])  # the GitHub notification never goes
+        self.assertIn("2 personal checked for to-dos", summary)
+        self.assertEqual(sorted((t["title"], t["source"]) for t in self.store.tasks()),
+                         [("Buy milk", "whatsapp"), ("Send Sam the trip photos", "gmail")])
+        self.assertEqual(self.cards, [])     # no reply drafts for personal mail
+        self.assertEqual(prepared, [])       # Forge only prepares school work
+        self.assertTrue(any("New task: Buy milk" in n for n, _ in self.notes))
+
+    def test_personal_todos_can_be_switched_off(self):
+        self.items = [{"source": "gmail", "ext_id": "p1", "sender": "Sam", "address": "sam@gmail.com", "title": "photos",
+                       "text": "Can you send me the trip photos by Friday?"}]
+        with mock.patch.object(settings, "get", lambda k, d=None: False if k == "agent_personal_todos" else settings._data.get(k, d)):
+            self.agent.run()
+        self.assertEqual(self.sent_to_ai, [])
+        self.assertTrue(self.store.seen("gmail", "p1"))
+
+    def test_whatsapp_source(self):
+        chats = [{"chat": "Sam", "time": "9:41 PM", "unread": 2, "sender": "", "text": "bring the charger tomorrow", "from_me": False},
+                 {"chat": "Ali", "time": "9:00 PM", "unread": 0, "sender": "", "text": "ok", "from_me": True},
+                 {"chat": "Zoe", "time": "8:00 PM", "unread": 0, "sender": "", "text": "Reacted 👍 to: \"hi\"",
+                  "from_me": False, "reaction": "👍"}]
+        with mock.patch.object(self.sources, "_whatsapp_quiet", lambda: True), \
+                mock.patch.object(self.sources.whatsapp, "recent_chats", lambda: chats):
+            items = self.sources._whatsapp()
+        self.assertEqual([(i["source"], i["group"], i["text"]) for i in items], [("whatsapp", "Sam", "bring the charger tomorrow")])
+        with mock.patch.object(self.sources, "_whatsapp_quiet", lambda: False), \
+                mock.patch.object(self.sources.whatsapp, "recent_chats", lambda: self.fail("shouldn't pop WhatsApp up")):
+            self.assertEqual(self.sources._whatsapp(), [])  # you're using the PC: tried again next time
+
+    def test_automated_mail_is_skipped(self):
+        ok = lambda a: self.sources.worth_reading({"source": "gmail", "address": a, "text": "hi"})
+        self.assertTrue(ok("sam@gmail.com"))
+        self.assertTrue(ok("newsome.k@gmail.com"))
+        for a in ("noreply@x.com", "no-reply@x.com", "notifications@github.com", "news@bbc.co.uk", "info@shop.com",
+                  "deals@shop.com", "mailer-daemon@google.com"):
+            self.assertFalse(ok(a), a)
+        self.assertFalse(self.sources.worth_reading({"source": "whatsapp", "text": "hi", "from_me": True}))
+
     def test_out_of_budget_waits(self):
         with mock.patch.object(self.core.ai, "agent_may_use", lambda n=1: False):
             summary = self.agent.run()
@@ -1508,7 +1565,7 @@ class TeamTests(unittest.TestCase):
 
     def test_profiles(self):
         from jarvis import team
-        self.assertEqual(list(team.AGENTS), ["jarvis", "scholar", "forge", "herald", "operator", "scout", "builder"])
+        self.assertEqual(list(team.AGENTS), ["jarvis", "scholar", "forge", "herald", "operator", "scout"])
         p = team.agent("forge").profile()
         self.assertEqual((p["title"], p["budget"], p["enabled"]), ("Forge", 15, True))
         self.assertTrue(team.agent("herald").may("send messages"))
@@ -1624,8 +1681,7 @@ class DelegationTests(unittest.TestCase):
         reply, _ = self.brain._llm("what's the capital of australia")
         self.assertEqual(reply, "Canberra, sir.")
         self.assertEqual(ai.usage()["total"], 1)
-        self.assertEqual(self.tools_seen(0), {"game_mode", "ask_scholar", "ask_forge", "ask_herald", "ask_operator", "ask_scout",
-                                              "ask_builder"})
+        self.assertEqual(self.tools_seen(0), {"game_mode", "ask_scholar", "ask_forge", "ask_herald", "ask_operator", "ask_scout"})
 
     def test_delegated_with_a_tool(self):
         self.replies = [self.call("ask_operator", request="check the cpu"), self.call("system_info"), self.say("CPU is at 5%.")]
@@ -1892,87 +1948,6 @@ class SystemPowerTests(unittest.TestCase):
         self.assertEqual(made, ["desktop\\Science"])
 
 
-class BuilderTests(unittest.TestCase):
-    """Builder with a fake Claude Code in a throwaway Git repository: your real Claude account is never used."""
-
-    def setUp(self):
-        import subprocess
-        from jarvis.tools import builder
-        self.b = builder
-        self.repo = Path(tempfile.mkdtemp()) / "Jarvis"
-        (self.repo / "tests").mkdir(parents=True)
-        (self.repo / "tests" / "test_ok.py").write_text("import unittest\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n")
-        (self.repo / "app.txt").write_text("v1\n")
-        git = lambda *a: subprocess.run(["git", *a], cwd=self.repo, check=True, capture_output=True)
-        git("init", "-q", "-b", "main")
-        git("config", "user.name", "Test")
-        git("config", "user.email", "test@example.com")
-        git("add", "-A")
-        git("commit", "-q", "-m", "start")
-        fake = Path(tempfile.mkdtemp()) / "claude.cmd"  # "edits" app.txt like Claude Code would
-        fake.write_text("@echo off\r\necho v2 cooler> app.txt\r\necho Made the UI cooler.\r\n")
-        self.store = Store(Path(tempfile.mkdtemp()) / "t.db")
-        self.notes, self.cards = [], []
-        self.builder = builder.Builder(self.store, lambda t, important=False: self.notes.append(t), lambda job: self.cards.append(job["id"]))
-        self.values = {"builder_enabled": True, "builder_account_confirmed": False}
-        for p in (mock.patch.object(builder, "ROOT", self.repo), mock.patch.object(builder, "cli", lambda: str(fake)),
-                  mock.patch.object(builder, "account", lambda: {"signed_in": True, "personal": True}),
-                  mock.patch.object(builder, "restart_soon", lambda: self.notes.append("restart")),
-                  mock.patch.object(settings, "get", lambda k, d=None: self.values.get(k, settings._data.get(k, d)))):
-            p.start()
-            self.addCleanup(p.stop)
-
-    def wait(self):
-        for _ in range(240):
-            if not self.builder.busy:
-                return
-            time.sleep(0.25)
-        self.fail("Builder didn't finish")
-
-    def test_change_apply_and_undo(self):
-        self.assertIn("has started", self.builder.start("make the UI cooler"))
-        self.wait()
-        job = self.store.jobs(limit=1)[0]
-        self.assertEqual(job["state"], "ready", job["error"])
-        self.assertTrue(job["data"]["tests_passed"])
-        self.assertEqual(self.cards, [job["id"]])  # asks before applying
-        self.assertEqual((self.repo / "app.txt").read_text().strip(), "v1")  # nothing changed yet
-        self.assertIn("Applied", self.builder.apply(job["id"]))
-        self.assertIn("cooler", (self.repo / "app.txt").read_text())
-        self.assertFalse(Path(job["data"]["tree"]).exists())  # the separate copy is cleaned up
-        self.assertIn("Undone", self.builder.undo_last())
-        self.assertEqual((self.repo / "app.txt").read_text().strip(), "v1")
-        self.assertEqual(self.notes.count("restart"), 2)
-
-    def test_discard(self):
-        self.builder.start("make the UI cooler")
-        self.wait()
-        job = self.store.jobs(limit=1)[0]
-        self.assertIn("Discarded", self.builder.discard(job["id"]))
-        self.assertEqual((self.repo / "app.txt").read_text().strip(), "v1")
-        self.assertIn("isn't waiting", self.builder.apply(job["id"]))
-
-    def test_refuses_company_accounts_and_unsaved_work(self):
-        with mock.patch.object(self.b, "account", lambda: {"signed_in": True, "personal": False}):
-            with self.assertRaises(RuntimeError) as e:
-                self.b.check_allowed()
-            self.assertIn("company or school account", str(e.exception))
-            self.values["builder_account_confirmed"] = True  # the user confirmed it's their own
-            self.b.check_allowed()
-        self.values["builder_enabled"] = False
-        with self.assertRaises(RuntimeError):
-            self.b.check_allowed()
-        self.values["builder_enabled"] = True
-        (self.repo / "app.txt").write_text("unsaved edit\n")
-        self.assertIn("aren't saved", self.builder.start("anything"))
-
-    def test_voice_request_shows_a_card(self):
-        brain, _, spoken = make_brain()
-        with mock.patch.object(settings, "get", lambda k, d=None: "off" if k == "llm_provider" else self.values.get(k, settings._data.get(k, d))):
-            brain.handle("go to claude code and open my jarvis chat. there, tell him to make the jarvis UI cooler", "text")
-        card = list(brain.pending.values())[-1]
-        self.assertEqual((card["tool"], card["args"]["request"]), ("builder_request", "make the jarvis UI cooler"))
-        self.assertIn("Claude Code", spoken[-1])
 
 
 if __name__ == "__main__":

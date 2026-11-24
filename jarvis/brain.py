@@ -20,7 +20,7 @@ import httpx
 from . import ai, providers, team
 from .config import get_secret, settings
 from .tools import (discord, files, games, github, google, home, layout, microsoft, notion, outlook_classic, routines,
-                    builder, phone, screen, slack, smalltalk, spotify, system, telegram, uia, weather, web, whatsapp, youtube)
+                    phone, screen, slack, smalltalk, spotify, system, telegram, uia, weather, web, whatsapp, youtube)
 from .tools import windows as win
 
 log = logging.getLogger("brain")
@@ -442,7 +442,6 @@ def t_prepare(kind, topic, requirements=""):
 
 _AGENT = [None]  # the running agent, for the task tools above
 _WORKER = [None]  # the running worker, for prepare_work
-_BUILDER = [None]  # the running Builder, for the builder tools
 
 
 # ---- Jarvis's team: the leader passes work to the specialist who owns the right tools (see jarvis/team)
@@ -465,8 +464,6 @@ _ask_tool("operator", "the laptop and phone: opening, closing and arranging apps
           "music, YouTube, games, smart home, volume, what's on screen, the clipboard, restart or shutdown")
 _ask_tool("scout", "looking things up: facts, news, anything recent or uncertain, reading web pages, weather, "
           "Google Drive, Notion pages, GitHub")
-_ask_tool("builder", "changing or improving Jarvis himself (his look, features, behaviour, fixing his bugs) through Claude "
-          "Code, and applying, discarding or undoing those changes")
 
 
 # ---- Operator: files, folders and Windows commands. Major actions ask first (enforced in Brain._auto_ok).
@@ -511,35 +508,6 @@ def t_list_folder(path):
       approval="voice")
 def t_run_command(command, why=""):
     return system.run(command)
-
-
-# ---- Builder: Jarvis changing his own code through Claude Code (see tools/builder.py)
-@tool("builder_request", "Ask Claude Code to make a change to Jarvis. The user approves before anything starts; the work "
-      "happens on a separate copy and is only applied after another approval.",
-      {"request": ("string", "the change, in full, as the user asked")}, ["request"], approval="button")
-def t_builder_request(request):
-    return _BUILDER[0].start(request) if _BUILDER[0] else {"error": "Builder isn't available."}
-
-
-@tool("builder_apply", "Apply a finished Builder change to Jarvis (the user approves first)",
-      {"job": ("integer", "the Builder job number")}, ["job"], approval="button")
-def t_builder_apply(job):
-    return _BUILDER[0].apply(job) if _BUILDER[0] else {"error": "Builder isn't available."}
-
-
-@tool("builder_discard", "Throw away a finished Builder change without applying it", {"job": ("integer", "job number")}, ["job"])
-def t_builder_discard(job):
-    return _BUILDER[0].discard(job) if _BUILDER[0] else {"error": "Builder isn't available."}
-
-
-@tool("builder_undo", "Undo the last Builder change that was applied (the user approves first)", approval="voice")
-def t_builder_undo():
-    return _BUILDER[0].undo_last() if _BUILDER[0] else {"error": "Builder isn't available."}
-
-
-@tool("builder_status", "Builder's recent changes and whether Claude Code is ready to use")
-def t_builder_status():
-    return {"ready": builder.status(), "changes": _BUILDER[0].jobs() if _BUILDER[0] else []}
 
 
 @tool("power_laptop", "Restart or shut down the laptop after a 30-second countdown (the user confirms first)",
@@ -632,14 +600,7 @@ class Brain:
                  "github_create_issue": "Open GitHub issue", "slack_post": "Post to Slack",
                  "telegram_send": "Send Telegram message", "power_laptop": "Restart or shut down the laptop",
                  "delete_file": "Delete (to the Recycle Bin)", "run_command": "Run a system command",
-                 "move_file": "Move", "copy_file": "Copy", "rename_file": "Rename",
-                 "builder_request": "Builder: send this to Claude Code", "builder_apply": "Builder: apply this change to Jarvis",
-                 "builder_undo": "Builder: undo the last change"}.get(name, name)
-        if name == "builder_apply" and self.store.job(args.get("job", 0)):
-            d = self.store.job(args["job"])["data"]
-            preview.update(request=d.get("request", ""), change=d.get("stat", ""), summary=(d.get("summary") or "")[:600],
-                           tests=("passed" if d.get("tests_passed") else "FAILED: applying it is not recommended") + (
-                               f" ({d.get('tests')})" if d.get("tests") else ""))
+                 "move_file": "Move", "copy_file": "Copy", "rename_file": "Rename"}.get(name, name)
         if name == "delete_file":
             try:
                 preview["full_path"] = str(system.resolve(args.get("path", "")))
@@ -884,20 +845,6 @@ class Brain:
         self._qowner = "forge"
         if self.worker and (reply := self._work_command(t, text)) is not None:
             return reply
-        # Builder: "tell Claude Code to make the UI cooler", "go to claude code and … tell him to …"
-        self._qowner = "builder"
-        if r := re.search(r"\b(?:tell|ask|get|have)\s+(?:claude(?:\s+code)?|him|it|builder)\s+(?:to\s+)?(.{6,})$", text.strip(), re.I) \
-                if re.search(r"\bclaude\b|\bbuilder\b", t) else None:
-            request = r.group(1).strip().rstrip(".!")
-            try:
-                builder.check_allowed()
-            except RuntimeError as e:
-                return str(e)
-            self._request_approval("builder_request", {"request": request})
-            return "Send that to Claude Code? Check the card, then press approve."
-        if m(r"^undo (?:the |builder'?s? )?(?:last )?(?:builder )?change$") or m(r"^undo what builder (?:did|changed)$"):
-            self._request_approval("builder_undo", {})
-            return "Undo Builder's last change? Say yes or press approve."
         # folders: "make a folder called Science on my desktop"
         self._qowner = "operator"
         if r := re.match(r"^(?:please )?(?:make|create)(?: me)? (?:a )?(?:new )?folder (?:called|named) (.+?) (?:on|in) (?:my |the )?(.+)$",
@@ -1312,7 +1259,7 @@ class Brain:
 
     def _auto_ok(self, name, args=None):
         """True when a tool that normally asks first may run at once. The user's rule: just do things, and ask first only
-        for major ones. Never automatic: deleting, system-changing commands, restart/shutdown, risky buttons, Builder.
+        for major ones. Never automatic: deleting, system-changing commands, restart/shutdown, risky buttons.
         Sends, file moves and the like run at once only when the user's own words asked for them (not text the AI read)."""
         args = args or {}
         if name == "run_command":
@@ -1351,11 +1298,6 @@ class Brain:
             return self._delegate(name[4:], str(args.get("request") or self.request), sources)
         self.emit("activity", {"text": f"Using {name}"})
         self.store.log("tool", f"{name} {json.dumps(args)[:200]}", owner)
-        if name == "builder_request":
-            try:
-                builder.check_allowed()  # say why up front, rather than after the user approves
-            except RuntimeError as e:
-                return {"error": str(e)}
         if t["approval"] and not self._auto_ok(name, args):
             self._request_approval(name, args)
             return {"status": "awaiting_user_approval", "note": "A confirmation card is shown. It runs only if the user approves."}

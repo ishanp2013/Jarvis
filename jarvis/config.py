@@ -72,6 +72,8 @@ DEFAULTS = {
     "agent_enabled": True,
     "agent_interval_min": 45,        # how often it checks Classroom, Gmail and phone notifications
     "agent_school_senders": "",      # one per line: teacher emails, @school-domain, WhatsApp group names
+    "agent_personal_todos": True,    # also find to-dos in personal messages (Gmail, WhatsApp, ...), not just school ones
+    "agent_whatsapp": True,          # read WhatsApp Desktop's chat list on this PC (latest message of each chat)
     "agent_daily_budget": 25,        # AI requests per day the agent may use
     "ai_daily_limit": 50,            # your AI plan's daily request limit (OpenRouter free: about 50)
     "ai_chat_reserve": 15,           # requests always kept for your own chat
@@ -87,11 +89,6 @@ DEFAULTS = {
     "agent_herald_on": True, "agent_herald_budget": 3,
     "agent_operator_on": True, "agent_operator_budget": 2,
     "agent_scout_on": True, "agent_scout_budget": 5,
-    "agent_builder_on": True, "agent_builder_budget": 2,
-    # Builder: changes Jarvis's own code through Claude Code (only with your own personal Claude account)
-    "builder_enabled": False,
-    "builder_account_confirmed": False,  # set only if Claude Code's account is yours despite a non-personal domain
-    "builder_timeout_min": 30,
     # welcome-back briefing
     "briefing_enabled": True,        # brief me when I come back to the laptop
     "briefing_away_min": 30,         # how long away counts as "away"

@@ -38,17 +38,11 @@ AGENTS = {
         "'current', search without guessing a year (use the current date you're given). Before stating a fact, open the "
         "most reliable result with read_webpage and answer only with what that page says; if sources disagree or don't "
         "say, tell the user plainly. Name the source you used. " + _COMMON, "#ffd84f", "compass", (READ,), 5),
-    "builder": Specialist(
-        "builder", "Builder", "Improves Jarvis himself: passes coding requests to Claude Code, tests the result, applies or undoes it.",
-        "You are Builder, Jarvis's engineer. You change Jarvis's own code through Claude Code: start a change with "
-        "builder_request (the user approves it first), apply or discard finished changes, and undo the last one when asked. "
-        "Pass the user's request on in full. " + _COMMON, "#ff6fb5", "wrench", (READ, FILES), 2),
 }
 
 OWNER = {}
 for _agent, _names in {
-    "jarvis": ["game_mode", "ask_scholar", "ask_forge", "ask_herald", "ask_operator", "ask_scout", "ask_builder"],
-    "builder": ["builder_request", "builder_apply", "builder_discard", "builder_undo", "builder_status"],
+    "jarvis": ["game_mode", "ask_scholar", "ask_forge", "ask_herald", "ask_operator", "ask_scout"],
     "scholar": ["my_tasks", "my_task_add", "my_task_done", "tasks_list", "task_add", "calendar_upcoming"],
     "forge": ["prepare_work"],
     "herald": ["email_unread", "email_search", "email_read", "email_compose", "email_reply", "calendar_add",

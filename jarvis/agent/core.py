@@ -1,10 +1,11 @@
 """The background agent loop.
 
 Every `agent_interval_min` minutes (and on "check now"):
-1. collect new items from Classroom, Gmail, Outlook, phone notifications and Discord
-2. keep non-school items as counts only; send school items to the AI in batches (agent/triage.py)
-3. add assignments and tests to the task list, with deadlines and priorities
-4. turn emails that need a reply into reply drafts, shown as approval cards (never sent on their own)
+1. collect new items from Classroom, Gmail, Outlook, WhatsApp Desktop, phone notifications and Discord
+2. send school items, and personal ones that could hold a to-do (setting agent_personal_todos), to the AI in
+   batches (agent/triage.py); everything else is kept as a count only
+3. add everything you have to do to the task list (the Tasks tab), with deadlines and priorities
+4. turn school emails that need a reply into reply drafts, shown as approval cards (never sent on their own)
 5. tell you about anything important (dashboard, phone, and a spoken line if you're at the laptop)
 
 Every minute it also checks reminders: the day before a deadline and the morning of it.
@@ -14,7 +15,7 @@ import logging
 import threading
 import time
 
-from .. import ai
+from .. import ai, providers
 from ..config import settings
 from ..tools import google, microsoft
 from . import dates, sources, triage
@@ -77,13 +78,14 @@ class Agent:
     def _run(self, reason):
         started = time.time()
         items, problems = sources.collect(self.store)
-        school = [it for it in items if it["school"]]
+        personal_ok = settings.get("agent_personal_todos", True) and not (settings.get("private_mode") and providers.is_cloud())
+        school = [it for it in items if it["school"] or (personal_ok and sources.worth_reading(it))]
         for it in items:
-            if not it["school"]:
+            if not any(it is x for x in school):
                 self.store.add_item(it)  # remembered (so it isn't counted again), never sent to the AI
         new_tasks, drafts, important, analysed, waiting = [], 0, [], 0, 0
         for it in school:  # full email text for school mail (the list only has a preview)
-            if it["source"] in ("gmail", "outlook"):
+            if it["school"] and it["source"] in ("gmail", "outlook"):
                 try:
                     mod = google if it["source"] == "gmail" else microsoft
                     it["text"] = (mod.read_mail(it["ext_id"]).get("body") or it["text"])[:3000]
@@ -118,14 +120,16 @@ class Agent:
                                               r["importance"], it["source"], f'{it["source"]}:{it["ext_id"]}')
                     if tid:
                         new_tasks.append({"title": r["task"]["title"], "due": r["task"]["due"]})
+                        self.store.log("task", f'Added to your tasks: {r["task"]["title"]} (from {it["source"]})', "scholar")
                         try:
-                            self.on_task(self.store.task(tid))
+                            if it["school"]:  # Forge prepares school work only
+                                self.on_task(self.store.task(tid))
                         except Exception:
                             log.exception("on_task")
-                if r["reply"] and it["source"] in ("gmail", "outlook"):
+                if r["reply"] and it["school"] and it["source"] in ("gmail", "outlook"):
                     self.request_reply(it, r["reply"])
                     drafts += 1
-                if r["importance"] >= 4 or r["category"] in ("assignment", "test"):
+                if it["school"] and (r["importance"] >= 4 or r["category"] in ("assignment", "test")):
                     important.append(r["summary"] or it["title"])
         # tell the user
         for t in new_tasks:
@@ -133,7 +137,10 @@ class Agent:
         for s in important[:3]:
             if not any(s == t["title"] for t in new_tasks):
                 self.notify(s, important=False)
-        parts = [f"{len(items)} new item{'s' if len(items) != 1 else ''}", f"{len(school)} from school"]
+        n_school = sum(1 for it in school if it["school"])
+        parts = [f"{len(items)} new item{'s' if len(items) != 1 else ''}", f"{n_school} from school"]
+        if len(school) > n_school:
+            parts.append(f"{len(school) - n_school} personal checked for to-dos")
         if analysed:
             parts.append(f"{analysed} understood")
         if new_tasks:

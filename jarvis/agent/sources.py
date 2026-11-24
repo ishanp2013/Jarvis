@@ -1,15 +1,17 @@
 """Where the agent looks: Google Classroom (school account), Gmail (including Classroom's emails forwarded from a
-school account that can't be connected), Outlook, phone notifications (WhatsApp groups and the like, through
-KDE Connect) and the Discord channels you selected.
+school account that can't be connected), Outlook, WhatsApp Desktop on this PC (each chat's latest message, read
+from the chat list without opening anything), phone notifications (through KDE Connect) and the Discord
+channels you selected.
 
 Each collector returns only items it hasn't seen before. Every item is marked school or not, using your
-list of school senders (Settings -> Agent). Only school items are ever sent to the AI."""
+list of school senders (Settings -> Agent). School items always go to the AI; personal ones only when
+"find to-dos in personal messages" is on, and never newsletters, no-reply mail and the like (see worth_reading)."""
 import datetime as dt
 import logging
 import re
 
 from ..config import settings
-from ..tools import classroom, discord, google, microsoft, phone
+from ..tools import classroom, discord, google, microsoft, phone, whatsapp
 
 log = logging.getLogger("agent")
 MESSAGE_APPS = {"whatsapp", "whatsapp business", "classroom", "google classroom", "discord", "telegram", "messages", "gmail"}
@@ -32,6 +34,21 @@ def is_school(item, patterns=None):
     pats = school_patterns() if patterns is None else patterns
     hay = " ".join(str(item.get(k, "")) for k in ("sender", "address", "group")).lower()
     return any(p in hay for p in pats)
+
+
+# Mail that is never a personal to-do: automated senders, newsletters, receipts and the like.
+AUTOMATED = re.compile(r"(?:^|[._+-])(?:no-?reply|do-?not-?reply|notifications?|notify|alerts?|newsletters?|news|"
+                       r"mailer(?:-daemon)?|marketing|promo(?:tions?)?|offers?|deals|updates?|digest|info|hello|team|"
+                       r"support|billing|receipts?|accounts?|security|bounce)(?:[._+-]|@)", re.I)
+
+
+def worth_reading(item):
+    """A personal item that could hold a to-do for you: not your own message, not an automated email."""
+    if item.get("from_me"):
+        return False
+    if item["source"] in ("gmail", "outlook") and AUTOMATED.search(str(item.get("address", "")).lower()):
+        return False
+    return bool((item.get("text") or item.get("title") or "").strip())
 
 
 def _gmail():
@@ -76,6 +93,51 @@ def _phone():
     return out
 
 
+def _whatsapp_quiet():
+    """Reading the chat list needs WhatsApp's window un-minimised for a moment. In the background that's only done
+    when it won't get in your way: the window is already open, or you haven't touched the PC for a minute."""
+    import win32gui
+    try:
+        return not win32gui.IsIconic(whatsapp._window()) or _idle_seconds() >= 60
+    except whatsapp.ReadError:
+        return False
+
+
+def _idle_seconds():
+    """Seconds since the last keyboard or mouse input on this PC."""
+    import ctypes
+
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+    li = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(li)):
+        return 0
+    return ((ctypes.windll.kernel32.GetTickCount() - li.dwTime) & 0xFFFFFFFF) / 1000
+
+
+def _whatsapp():
+    out = []
+    if not _whatsapp_quiet():
+        return out  # tried again at the next check
+    for c in whatsapp.recent_chats():
+        if c.get("from_me") or c.get("reaction") or not (c.get("text") or "").strip():
+            continue
+        out.append({"source": "whatsapp", "ext_id": f"{c['chat']}|{c.get('time', '')}|{c['text'][:80]}",
+                    "sender": c.get("sender") or c["chat"], "group": c["chat"], "title": f"WhatsApp: {c['chat']}",
+                    "text": c["text"], "when": c.get("time", ""), "url": "", "unread": c.get("unread", 0)})
+    return out
+
+
+def _whatsapp_ready():
+    if not (settings.get("agent_whatsapp", True) and settings.get("whatsapp_read", True)):
+        return False
+    try:
+        whatsapp._window()
+        return True
+    except Exception:
+        return False
+
+
 def _discord():
     out = []
     for name in discord.selected_channels():
@@ -89,6 +151,7 @@ COLLECTORS = {
     "classroom": (classroom.connected, _classroom),
     "gmail": (google.connected, _gmail),
     "outlook": (microsoft.connected, _outlook),
+    "whatsapp": (_whatsapp_ready, _whatsapp),
     "phone": (lambda: bool(phone.cli()), _phone),
     "discord": (discord.connected, _discord),
 }
