@@ -25,6 +25,7 @@ class Listener:
         self.mode = "idle"            # idle | listening
         self.listen_deadline = 0.0
         self.noise = 200.0             # running estimate of background RMS
+        self.hold_noise = False        # True while Jarvis talks, so his own voice isn't learnt as room noise
         self.buf, self.speech_started, self.last_voice = [], False, 0.0
         self.clock = 0.0               # audio time in seconds (robust to processing lag, unlike wall-clock)
         self.level = 0.0
@@ -82,7 +83,8 @@ class Listener:
                 last_level_emit = now
 
             if self.mode == "idle":
-                self.noise = 0.98 * self.noise + 0.02 * rms
+                if not self.hold_noise:
+                    self.noise = 0.98 * self.noise + 0.02 * rms
                 if settings["wake_word_enabled"]:
                     score = self.wake.score(frame)
                     if score >= float(settings["wake_threshold"]):

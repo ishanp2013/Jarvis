@@ -308,13 +308,23 @@ class Jarvis:
         self.speaker.say(text)
 
     def _on_speaking(self, speaking):
+        if self.listener:
+            self.listener.hold_noise = speaking  # his own voice isn't room noise: it would make your answer look too quiet
         if speaking:
             return
         self.emit("state", {"state": "idle"})
-        # Continuous conversation: after answering a spoken request, listen briefly without the wake word.
-        if self.voice_turn and self.listener and self.listener.stream and settings["follow_up_seconds"] > 0:
-            time.sleep(0.25)  # let the speaker's tail die away so we don't hear ourselves
-            self.listener.listen_now(window=float(settings["follow_up_seconds"]))
+        # After answering a spoken request, listen again without the wake word: only when Jarvis asked something
+        # ("smart", the default), after every reply ("always"), or never ("off").
+        mode = settings.get("follow_up_mode", "smart")
+        seconds = float(settings["follow_up_seconds"])
+        if self.voice_turn and self.listener and self.listener.stream and seconds > 0 and mode != "off":
+            asked = bool(getattr(self.brain, "wants_reply", False))
+            if mode == "always" or asked:
+                log.info("follow-up: listening for %.0fs (%s)", seconds, "asked a question" if asked else "always on")
+                time.sleep(0.25)  # let the speaker's tail die away so we don't hear ourselves
+                self.listener.listen_now(window=max(seconds, 8.0) if asked else seconds)
+            else:
+                log.info("follow-up: not listening (no question asked)")
         self.voice_turn = False
 
     def stop_all(self):

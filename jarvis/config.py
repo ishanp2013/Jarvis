@@ -31,7 +31,8 @@ DEFAULTS = {
     "wake_model": "hey_jarvis",      # hey_jarvis | alexa | hey_mycroft | hey_rhasspy | path to your own .onnx model
     "wake_phrase_label": "",         # what to call a custom wake word on screen, e.g. "Hey Friday"
     "stt_model": "base.en",          # tiny.en is faster, small.en more accurate
-    "follow_up_seconds": 6,          # keep listening after a reply without the wake word
+    "follow_up_mode": "smart",       # smart = listen again only when Jarvis asked something | always | off
+    "follow_up_seconds": 6,          # how long to listen after a reply without the wake word
     "silence_end_ms": 900,
     # voice output
     "tts_provider": "edge",          # edge | elevenlabs | fish | windows

@@ -710,9 +710,25 @@ class VoicePipelineTests(unittest.TestCase):
         j.listener = Listener(speech.WakeWord(), lambda a: None, j._on_wake, lambda *a: None)
         j.listener.stream = True
         j.voice_turn = True
-        with mock.patch.dict(settings._data, {"follow_up_seconds": 6}):  # not your own setting, which may be off
-            j._on_speaking(False)  # a spoken reply just finished
-        self.assertEqual(j.listener.mode, "listening", "should keep listening for a follow-up")
+        mine = {"follow_up_seconds": 6, "follow_up_mode": "smart"}  # not your own settings, which may differ
+        with mock.patch.dict(settings._data, mine):
+            j.brain.wants_reply = False
+            j._on_speaking(False)  # a plain answer: no reason to open the mic
+            self.assertEqual(j.listener.mode, "idle")
+            j.voice_turn, j.brain.wants_reply = True, True
+            j._on_speaking(False)  # Jarvis asked something: keep listening for the answer
+            self.assertEqual(j.listener.mode, "listening", "should keep listening for a follow-up")
+            j.stop_all()
+            j.voice_turn, j.brain.wants_reply = True, False
+            with mock.patch.dict(settings._data, {"follow_up_mode": "always"}):
+                j._on_speaking(False)
+            self.assertEqual(j.listener.mode, "listening")
+            j.voice_turn, j.brain.wants_reply = True, True
+            j.stop_all()
+            with mock.patch.dict(settings._data, {"follow_up_mode": "off"}):
+                j._on_speaking(False)
+            self.assertEqual(j.listener.mode, "idle")
+        self.assertFalse(j.listener.hold_noise)  # his voice only stays out of the noise estimate while he talks
         j.stop_all()
         self.assertEqual(j.listener.mode, "idle")
         gen = j.brain.cancel_gen
@@ -1966,6 +1982,29 @@ class SystemPowerTests(unittest.TestCase):
         self.assertEqual(made, ["desktop\\Science"])
 
 
+
+
+class FollowUpTests(unittest.TestCase):
+    def test_listens_again_only_when_asked_something(self):
+        brain, _, _ = make_brain()
+        for said in ("Which Sam do you mean, sir?", "I found two. Which one?", "Shall I open it, sir.", "Do you want me to send it?",
+                     "Tell me which chat.", "Your presentation is ready. Want me to open it?"):
+            self.assertTrue(brain.expects_reply(said), said)
+        for said in ("Opening YouTube, sir.", "It's 24 degrees and sunny.", "Done.", "You have 3 tasks. The first is due Friday.",
+                     "Sam hasn't replied yet."):
+            self.assertFalse(brain.expects_reply(said), said)
+        brain.pending["x"] = {"id": "x", "tool": "delete_file", "mode": "voice"}
+        self.assertTrue(brain.expects_reply("Delete it? Check the card."))
+        self.assertTrue(brain.expects_reply("Done."))  # a card waiting for a spoken yes always listens
+        brain.pending["x"]["mode"] = "button"
+        self.assertFalse(brain.expects_reply("Done."))
+
+    def test_post_records_whether_a_reply_is_expected(self):
+        brain, _, _ = make_brain()
+        brain._post("Which one, sir?")
+        self.assertTrue(brain.wants_reply)
+        brain._post("Opening YouTube, sir.")
+        self.assertFalse(brain.wants_reply)
 
 
 class MisheardTests(unittest.TestCase):

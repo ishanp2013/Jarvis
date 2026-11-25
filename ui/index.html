@@ -163,7 +163,9 @@
       </div>
       <div class="row"><span id="wake-status" class="muted"></span><button class="small" id="wake-apply">Use this wake word</button></div>
       <label>Wake sensitivity <input type="range" min="0.3" max="0.9" step="0.05" data-set="wake_threshold"><small>lower = triggers more easily</small></label>
-      <label>Follow-up listening (seconds after a reply, 0 = off) <input type="number" min="0" max="20" data-set="follow_up_seconds"></label>
+      <label>Listen again after a reply
+        <select data-set="follow_up_mode"><option value="smart">Only when Jarvis asks me something (recommended)</option><option value="always">After every reply</option><option value="off">Never: I'll say "Jarvis" each time</option></select></label>
+      <label>How long to listen (seconds, a question gets at least 8) <input type="number" min="0" max="20" data-set="follow_up_seconds"></label>
       <label>Speech recognition model
         <select data-set="stt_model"><option value="tiny.en">tiny.en: fastest</option><option value="base.en">base.en: balanced (recommended)</option><option value="small.en">small.en: most accurate, slower</option></select></label>
 

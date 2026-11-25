@@ -574,6 +574,7 @@ class Brain:
         self.store, self.emit, self.speak = store, emit, speak
         self.listener_ref = listener_ref  # lambda returning the Listener (mic control)
         self.pending = {}
+        self.wants_reply = False  # set by _post: did the last answer ask the user something?
         self.request = ""
         self.lock = threading.Lock()
         self.cancel_gen = 0
@@ -658,6 +659,7 @@ class Brain:
         self.cancel_gen += 1
         gen = self.cancel_gen
         self.source = source
+        self.wants_reply = False
         self.request = text  # the user's own words: what may trigger an unconfirmed send
         self._reply_agent = channel
         self.store.add_message("user", text, None, channel)
@@ -723,8 +725,21 @@ class Brain:
         full = full if has_h else self._address(full)
         self._post(full, sources)
 
+    # Phrases that invite an answer even without a question mark ("Say yes to confirm").
+    _INVITES = re.compile(r"\b(?:say yes|say 'yes'|press approve|check the card|tell me (?:which|what|when|who|where|how)|"
+                          r"which (?:one|of)|let me know (?:which|what|if)|do you want|would you like|shall i|should i|want me to)\b", re.I)
+
+    def expects_reply(self, text):
+        """True when Jarvis just asked the user something (a question, or a card waiting for a spoken yes), so the mic
+        should open again. A plain statement like 'Opening YouTube.' doesn't."""
+        if any(p.get("mode") == "voice" for p in self.pending.values()):
+            return True  # a card is waiting and "yes" or "no" answers it
+        tail = " ".join(re.split(r"(?<=[.!?])\s+", (text or "").strip())[-2:])
+        return "?" in tail or bool(self._INVITES.search(tail))
+
     def _post(self, text, sources=()):
         """An answer into the chat, marked with the team member who gave it and the channel it belongs to."""
+        self.wants_reply = self.expects_reply(text)
         agent, channel = getattr(self, "_reply_agent", "jarvis") or "jarvis", getattr(self, "channel", "jarvis")
         self.store.add_message("assistant", text, agent, channel)
         self.emit("message", {"role": "assistant", "text": text, "sources": list(sources), "agent": agent, "channel": channel})
