@@ -1,4 +1,5 @@
-"""Where the agent looks: Google Classroom (school account), Gmail (including Classroom's emails forwarded from a
+"""Where the agent looks: Google Classroom (school account), your Google calendars (a school calendar shared with
+your personal account shows up here), Gmail (including Classroom's emails forwarded from a
 school account that can't be connected), Outlook, WhatsApp Desktop on this PC (each chat's latest message, read
 from the chat list without opening anything), phone notifications (through KDE Connect) and the Discord
 channels you selected.
@@ -26,8 +27,14 @@ def school_patterns():
 CLASSROOM_MAIL = re.compile(r"@classroom\.google\.com\s*$|^classroom\.google\.com$", re.I)
 
 
+# Calendar entries that are school work, e.g. Classroom's "Assignment: Worksheets on pressure".
+SCHOOL_EVENT = re.compile(r"^\s*(?:assignment|due|homework|quiz|test|exam|project|worksheet|classwork|question)\b", re.I)
+
+
 def is_school(item, patterns=None):
     if item["source"] == "classroom":
+        return True
+    if item["source"] == "calendar" and SCHOOL_EVENT.search(str(item.get("title", ""))):
         return True
     if CLASSROOM_MAIL.search(str(item.get("address", "")).strip()):
         return True
@@ -61,6 +68,21 @@ def _gmail():
             ids.add(m["id"])
             out.append({"source": "gmail", "ext_id": m["id"], "sender": m["from"], "address": m["from_address"],
                         "title": m["subject"], "text": m["preview"], "when": m["received"], "url": ""})
+    return out
+
+
+def _calendar():
+    """Entries on the Google calendars you can see over the next 2 weeks that look like school work, or that sit on a
+    calendar named like a school sender. This is how a school calendar shared with your personal Google account
+    (or a class calendar added to it) reaches Scholar without touching the school account."""
+    out, pats = [], school_patterns()
+    for e in google.events(14, limit=100):
+        if e["calendar_id"].endswith("holiday@group.v.calendar.google.com"):
+            continue
+        if not (SCHOOL_EVENT.search(e["subject"]) or any(p in e["calendar"].lower() for p in pats)):
+            continue
+        out.append({"source": "calendar", "ext_id": f"{e['id']}|{e['start']}", "sender": e["calendar"], "group": e["calendar"],
+                    "title": e["subject"], "text": e["description"], "due": e["start"][:10], "when": e["start"], "url": ""})
     return out
 
 
@@ -150,6 +172,7 @@ def _discord():
 COLLECTORS = {
     "classroom": (classroom.connected, _classroom),
     "gmail": (google.connected, _gmail),
+    "calendar": (google.connected, _calendar),
     "outlook": (microsoft.connected, _outlook),
     "whatsapp": (_whatsapp_ready, _whatsapp),
     "phone": (lambda: bool(phone.cli()), _phone),

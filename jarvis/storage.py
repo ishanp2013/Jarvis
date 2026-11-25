@@ -144,6 +144,9 @@ class Store:
     def add_task(self, title, details="", kind="other", due=None, importance=3, source="you", source_ref=""):
         if source_ref and self._query("SELECT 1 FROM tasks WHERE source_ref=?", (source_ref,)):
             return None  # already on the list
+        if source != "you" and self._query("SELECT 1 FROM tasks WHERE status='open' AND lower(title)=lower(?) AND IFNULL(due,'')=?",
+                                           (redact(title)[:200], due or "")):
+            return None  # the same work found twice (an email and a calendar entry)
         now = time.time()
         cur = self._exec("INSERT INTO tasks(title, details, kind, due, importance, status, source, source_ref, created, updated) "
                          "VALUES(?,?,?,?,?,?,?,?,?,?)", (redact(title)[:200], redact(details or "")[:2000], kind, due,

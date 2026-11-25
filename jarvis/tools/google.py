@@ -250,7 +250,7 @@ def reply_mail(msg_id, body):
 CAL = "https://www.googleapis.com/calendar/v3"
 
 
-def events(days=7):
+def events(days=7, limit=25):
     start = dt.datetime.now().astimezone()
     end = start + dt.timedelta(days=days)
     out = []
@@ -260,15 +260,17 @@ def events(days=7):
         try:
             rows = _req("GET", f"{CAL}/calendars/{urllib.parse.quote(cal['id'])}/events", params={
                 "timeMin": start.isoformat(), "timeMax": end.isoformat(), "singleEvents": "true",
-                "orderBy": "startTime", "maxResults": 25}).get("items", [])
+                "orderBy": "startTime", "maxResults": max(25, limit)}).get("items", [])
         except RuntimeError:
             continue
         for e in rows:
             s, f = e.get("start", {}), e.get("end", {})
             out.append({"subject": e.get("summary", "(no title)"), "start": (s.get("dateTime") or s.get("date", ""))[:16],
                         "end": (f.get("dateTime") or f.get("date", ""))[:16], "location": e.get("location", ""),
-                        "all_day": "date" in s, "calendar": cal.get("summary", "")})
-    return sorted(out, key=lambda e: e["start"])[:25]
+                        "all_day": "date" in s, "calendar": cal.get("summary", ""), "id": e.get("id", ""),
+                        "description": (e.get("description") or "")[:600], "primary": bool(cal.get("primary")),
+                        "calendar_id": cal["id"]})
+    return sorted(out, key=lambda e: e["start"])[:limit]
 
 
 def create_event(subject, start, end=None, location=""):

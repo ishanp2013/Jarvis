@@ -1216,6 +1216,24 @@ class AgentTests(unittest.TestCase):
                 mock.patch.object(self.sources.whatsapp, "recent_chats", lambda: self.fail("shouldn't pop WhatsApp up")):
             self.assertEqual(self.sources._whatsapp(), [])  # you're using the PC: tried again next time
 
+    def test_school_calendar_entries_become_tasks(self):
+        from jarvis.tools import google
+        ev = lambda i, subj, cal, cid="x": {"id": i, "subject": subj, "start": "2026-11-28", "end": "2026-11-28", "location": "",
+                                           "all_day": True, "calendar": cal, "description": "", "primary": False, "calendar_id": cid}
+        rows = [ev("e1", "Assignment: WORKSHEETS-PRESSURE,WINDS STORMS AND CYCLONES", "Geography 8B"),
+                ev("e2", "Christmas Day", "Holidays", "en.uae#holiday@group.v.calendar.google.com"),
+                ev("e3", "Dentist", "Personal"),
+                ev("e4", "Sports day", "Class 10B")]  # a calendar named like a school sender
+        with mock.patch.object(google, "events", lambda days=7, limit=25: rows):
+            items = self.sources._calendar()
+        self.assertEqual([i["ext_id"] for i in items], ["e1|2026-11-28", "e4|2026-11-28"])
+        self.assertTrue(self.sources.is_school(items[0], []))
+        self.assertEqual(items[0]["due"], "2026-11-28")
+        # the same work found again (say by email) isn't added twice
+        self.assertTrue(self.store.add_task("Worksheets: pressure", due="2026-11-28", source="calendar", source_ref="calendar:a"))
+        self.assertIsNone(self.store.add_task("worksheets: PRESSURE", due="2026-11-28", source="gmail", source_ref="gmail:b"))
+        self.assertTrue(self.store.add_task("worksheets: pressure", due="2026-11-28", source="you"))  # your own is always kept
+
     def test_automated_mail_is_skipped(self):
         ok = lambda a: self.sources.worth_reading({"source": "gmail", "address": a, "text": "hi"})
         self.assertTrue(ok("sam@gmail.com"))
