@@ -137,10 +137,21 @@ def _idle_seconds():
     return ((ctypes.windll.kernel32.GetTickCount() - li.dwTime) & 0xFFFFFFFF) / 1000
 
 
+WAITING = {"whatsapp": False}  # WhatsApp was skipped because you were busy; the agent retries when you pause
+
+
+def whatsapp_due():
+    """True when a skipped WhatsApp read can run now (you've paused, or WhatsApp is open)."""
+    return WAITING["whatsapp"] and _whatsapp_ready() and _whatsapp_quiet()
+
+
 def _whatsapp():
     out = []
     if not _whatsapp_quiet():
-        return out  # tried again at the next check
+        WAITING["whatsapp"] = True
+        log.info("whatsapp: skipped, you're busy; will read it as soon as you pause")
+        return out
+    WAITING["whatsapp"] = False
     for c in whatsapp.recent_chats():
         if c.get("from_me") or c.get("reaction") or not (c.get("text") or "").strip():
             continue

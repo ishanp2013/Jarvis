@@ -49,12 +49,12 @@ class Agent:
         while True:
             try:
                 self.reminders()
-                if settings.get("agent_enabled", True) and time.time() >= self.next_run():
+                if settings.get("agent_enabled", True) and (time.time() >= self.next_run() or sources.whatsapp_due()):
                     why = self.paused()
                     if why:
                         log.info("agent skipped: %s", why)
                     else:
-                        self.run("schedule")
+                        self.run("schedule" if time.time() >= self.next_run() else "WhatsApp, now you've paused")
             except Exception:
                 log.exception("agent loop")
             time.sleep(60)

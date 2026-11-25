@@ -1250,6 +1250,21 @@ class AgentTests(unittest.TestCase):
         self.assertIsNone(self.store.add_task("worksheets: PRESSURE", due="2026-11-28", source="gmail", source_ref="gmail:b"))
         self.assertTrue(self.store.add_task("worksheets: pressure", due="2026-11-28", source="you"))  # your own is always kept
 
+    def test_whatsapp_skipped_while_busy_is_retried_when_you_pause(self):
+        src = self.sources
+        with mock.patch.object(src, "_whatsapp_quiet", lambda: False), \
+                mock.patch.object(src.whatsapp, "recent_chats", lambda: self.fail("shouldn't pop WhatsApp up")):
+            self.assertEqual(src._whatsapp(), [])
+        self.assertTrue(src.WAITING["whatsapp"])
+        with mock.patch.object(src, "_whatsapp_ready", lambda: True):
+            with mock.patch.object(src, "_whatsapp_quiet", lambda: False):
+                self.assertFalse(src.whatsapp_due())  # still busy
+            with mock.patch.object(src, "_whatsapp_quiet", lambda: True):
+                self.assertTrue(src.whatsapp_due())   # you paused: read it now
+                with mock.patch.object(src.whatsapp, "recent_chats", lambda: []):
+                    src._whatsapp()
+                self.assertFalse(src.whatsapp_due())  # and it isn't retried again
+
     def test_automated_mail_is_skipped(self):
         ok = lambda a: self.sources.worth_reading({"source": "gmail", "address": a, "text": "hi"})
         self.assertTrue(ok("sam@gmail.com"))
