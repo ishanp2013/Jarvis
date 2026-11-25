@@ -140,6 +140,37 @@ def _window():
     return found[0]
 
 
+def running():
+    """Is WhatsApp Desktop running (it can be running with no window, closed to the system tray)?"""
+    import psutil
+    return any((p.info["name"] or "").lower().startswith("whatsapp") for p in psutil.process_iter(["name"]))
+
+
+def has_window():
+    try:
+        _window()
+        return True
+    except ReadError:
+        return False
+
+
+def wake(timeout=12):
+    """WhatsApp closed to the tray has no window to read. Starting it again makes Windows bring the running one back,
+    minimised and without taking focus. Returns True once a window exists."""
+    if has_window():
+        return True
+    try:
+        os.startfile("whatsapp:", show_cmd=7)  # SW_SHOWMINNOACTIVE
+    except (OSError, TypeError):
+        return False
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(0.5)
+        if has_window():
+            return True
+    return False
+
+
 def _session(work):
     """Show WhatsApp (without taking focus) if it's minimised, find its chat list, run work(client, U, root, grid),
     and minimise it again afterwards."""

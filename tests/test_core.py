@@ -1225,6 +1225,7 @@ class AgentTests(unittest.TestCase):
                  {"chat": "Zoe", "time": "8:00 PM", "unread": 0, "sender": "", "text": "Reacted 👍 to: \"hi\"",
                   "from_me": False, "reaction": "👍"}]
         with mock.patch.object(self.sources, "_whatsapp_quiet", lambda: True), \
+                mock.patch.object(self.sources.whatsapp, "wake", lambda: True), \
                 mock.patch.object(self.sources.whatsapp, "recent_chats", lambda: chats):
             items = self.sources._whatsapp()
         self.assertEqual([(i["source"], i["group"], i["text"]) for i in items], [("whatsapp", "Sam", "bring the charger tomorrow")])
@@ -1261,9 +1262,26 @@ class AgentTests(unittest.TestCase):
                 self.assertFalse(src.whatsapp_due())  # still busy
             with mock.patch.object(src, "_whatsapp_quiet", lambda: True):
                 self.assertTrue(src.whatsapp_due())   # you paused: read it now
-                with mock.patch.object(src.whatsapp, "recent_chats", lambda: []):
+                with mock.patch.object(src.whatsapp, "wake", lambda: True), \
+                        mock.patch.object(src.whatsapp, "recent_chats", lambda: []):
                     src._whatsapp()
                 self.assertFalse(src.whatsapp_due())  # and it isn't retried again
+
+    def test_whatsapp_closed_to_the_tray(self):
+        src = self.sources
+        # running with no window: read only while you're away, and say so if it won't reopen
+        no_window = mock.Mock(side_effect=src.whatsapp.ReadError("no window"))
+        with mock.patch.object(src.whatsapp, "_window", no_window):
+            with mock.patch.object(src, "_idle_seconds", lambda: 5):
+                self.assertFalse(src._whatsapp_quiet())
+            with mock.patch.object(src, "_idle_seconds", lambda: 300):
+                self.assertTrue(src._whatsapp_quiet())
+            with mock.patch.object(src.whatsapp, "running", lambda: True):
+                self.assertTrue(src._whatsapp_ready())  # a tray-only WhatsApp still counts as available
+        with mock.patch.object(src, "_whatsapp_quiet", lambda: True), mock.patch.object(src.whatsapp, "wake", lambda: False):
+            with self.assertRaises(RuntimeError) as cm:
+                src._whatsapp()
+        self.assertIn("closed", str(cm.exception))
 
     def test_automated_mail_is_skipped(self):
         ok = lambda a: self.sources.worth_reading({"source": "gmail", "address": a, "text": "hi"})

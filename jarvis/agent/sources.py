@@ -121,8 +121,8 @@ def _whatsapp_quiet():
     import win32gui
     try:
         return not win32gui.IsIconic(whatsapp._window()) or _idle_seconds() >= 60
-    except whatsapp.ReadError:
-        return False
+    except whatsapp.ReadError:  # closed to the tray: bringing it back is only done while you're away
+        return _idle_seconds() >= 60
 
 
 def _idle_seconds():
@@ -152,6 +152,8 @@ def _whatsapp():
         log.info("whatsapp: skipped, you're busy; will read it as soon as you pause")
         return out
     WAITING["whatsapp"] = False
+    if not whatsapp.wake():
+        raise RuntimeError("WhatsApp Desktop is closed and wouldn't reopen. Open it once so I can read your groups.")
     for c in whatsapp.recent_chats():
         if c.get("from_me") or c.get("reaction") or not (c.get("text") or "").strip():
             continue
@@ -165,8 +167,7 @@ def _whatsapp_ready():
     if not (settings.get("agent_whatsapp", True) and settings.get("whatsapp_read", True)):
         return False
     try:
-        whatsapp._window()
-        return True
+        return whatsapp.running()  # a window isn't needed: it may be closed to the tray
     except Exception:
         return False
 
