@@ -68,9 +68,14 @@ _HALLUCINATIONS = {"", "you", "thank you.", "thanks for watching!", "thank you f
 # Words the speech model keeps getting wrong, fixed only where the meaning is clear ("my Android phone" stays).
 _MISHEARD = [
     (re.compile(r"\b(?:android|and read|an read|on read)(?=\s+(?:messages?|chats?|texts?|emails?|mails?|notifications?)\b)", re.I), "unread"),
+    # "cloud" is a real word ("cloud storage", "the cloud"), so it's only fixed where someone is addressed or opened
+    (re.compile(r"\bcloud(?=\s+code\b)", re.I), "Claude"),
+    (re.compile(r"\b(ask|tell|open|launch|start|close|use|call|talk to|speak to|go to|switch to|message|hey|ok|okay)\s+cloud\b"
+                r"(?!\s+(?:storage|drive|backup|service|server|computing|ai|model|provider|account|sync|file|files|folder)s?\b)",
+                re.I), r"\1 Claude"),
 ]
-_STT_HINT = ("Hey Jarvis, open Opera GX. Launch Discord. Open YouTube. Do I have any unread messages on WhatsApp? "
-             "Read my unread emails.")
+_STT_HINT = ("Hey Jarvis, open Opera GX. Launch Discord. Open YouTube. Open Claude. Ask Claude to help. "
+             "Do I have any unread messages on WhatsApp? Read my unread emails.")
 
 
 def fix_misheard(text):

@@ -1962,6 +1962,16 @@ class MisheardTests(unittest.TestCase):
         for keep in ("find my Android phone", "open Android Studio", "is my android connected"):
             self.assertEqual(speech.fix_misheard(keep), keep)
 
+    def test_claude_heard_as_cloud(self):
+        from jarvis import speech
+        self.assertEqual(speech.fix_misheard("open cloud"), "open Claude")
+        self.assertEqual(speech.fix_misheard("Ask cloud to explain this"), "Ask Claude to explain this")
+        self.assertEqual(speech.fix_misheard("hey cloud code, fix it"), "hey Claude code, fix it")
+        self.assertEqual(speech.fix_misheard("open cloud code"), "open Claude code")
+        for keep in ("save it to the cloud", "open cloud storage", "is my cloud backup done", "use cloud AI",
+                     "what's a cloud"):
+            self.assertEqual(speech.fix_misheard(keep), keep)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
