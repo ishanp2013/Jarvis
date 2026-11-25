@@ -320,6 +320,17 @@ function bindSettings() {
       if (k === "ms_client_id") refreshIntegrations();
     });
   });
+  // School senders: an explicit Save button (it also saves when you click away), with a "saved" confirmation.
+  const box = $('[data-set="agent_school_senders"]'), state = $("#senders-state");
+  if (box && state) {
+    const count = () => (S.agent_school_senders || "").split(/[\n,;]/).filter((x) => x.trim()).length;
+    box.addEventListener("input", () => { state.textContent = "Unsaved changes"; });
+    $("#senders-save").addEventListener("click", async () => {
+      S = await api.save_settings({ agent_school_senders: box.value.trim() });
+      state.textContent = `Saved ✓ (${count()} entries)`;
+    });
+    box.addEventListener("change", () => { state.textContent = "Saved ✓"; });
+  }
   $$("[data-save-secret]").forEach((b) => b.addEventListener("click", async () => {
     const name = b.dataset.saveSecret, inp = $(`[data-secret="${name}"]`);
     const st = await api.set_secret(name, inp.value);

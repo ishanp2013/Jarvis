@@ -136,7 +136,8 @@
       <label>Check every (minutes) <input type="number" min="15" max="240" data-set="agent_interval_min"></label>
       <label>School senders and groups, one per line
         <textarea data-set="agent_school_senders" rows="5" placeholder="@yourschool.edu&#10;teacher@school.org&#10;Ms Rao&#10;Class 10B (WhatsApp group name)"></textarea>
-        <small>Only items from these (and Google Classroom) are read by the AI. Everything else is just counted.</small></label>
+        <small>Group names must match the chat's name in WhatsApp exactly. School items are always read by the AI; personal messages only for to-dos.</small></label>
+      <div class="row"><span class="muted" id="senders-state"></span><button class="small" id="senders-save">Save</button></div>
       <label>AI requests per day for the agent <input type="number" min="0" max="500" data-set="agent_daily_budget"></label>
       <label>Your AI plan's daily limit <input type="number" min="10" max="10000" data-set="ai_daily_limit"><small>OpenRouter's free models: about 50. Jarvis always keeps some for your own questions.</small></label>
     </div>
